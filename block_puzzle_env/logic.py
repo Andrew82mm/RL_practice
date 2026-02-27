@@ -10,57 +10,64 @@ class Board:
         return self.grid
 
     def can_place(self, piece, x, y):
-        """Проверяет, можно ли разместить фигуру piece по координатам (x, y)"""
+        """Проверяет, можно ли разместить фигуру piece по координатам (x, y)."""
         h, w = piece.shape
-        
-        # Границы поля
+
         if x < 0 or y < 0 or x + w > self.size or y + h > self.size:
             return False
-        
-        # Пересечение с существующими блоками
-        # Вырезаем кусок поля, куда хотим поставить фигуру
-        target_area = self.grid[y:y+h, x:x+w]
-        
-        # Если хоть в одной клетке пересечение (1 и 1), то запрещаем
+
+        target_area = self.grid[y:y + h, x:x + w]
         if np.any((target_area & piece) != 0):
             return False
-            
+
         return True
 
     def place_piece(self, piece, x, y):
         h, w = piece.shape
-        self.grid[y:y+h, x:x+w] += piece
+        self.grid[y:y + h, x:x + w] += piece
         return self.grid
 
     def clear_lines_and_score(self):
         """
-        Проверяет и очищает полные строки и столбцы
-        Возвращает количество очищенных линий и флаг, стало ли поле пустым
+        Находит все заполненные строки и столбцы ОДНОВРЕМЕННО на текущем поле, затем обнуляет их все разом.
+        В старой версии строки очищались первыми, из-за чего столбец мог перестать быть полностью заполненным, хотя фактически должен был очиститься вместе со строкой.
         """
-        lines_cleared = 0
-        
-        # Находим заполненные строки
-        filled_rows = np.all(self.grid == 1, axis=1)
-        if np.any(filled_rows):
-            lines_cleared += np.sum(filled_rows)
-            self.grid[filled_rows, :] = 0
+        filled_rows = np.where(np.all(self.grid == 1, axis=1))[0]
+        filled_cols = np.where(np.all(self.grid == 1, axis=0))[0]
 
-        # Находим заполненные столбцы
-        filled_cols = np.all(self.grid == 1, axis=0)
-        if np.any(filled_cols):
-            lines_cleared += np.sum(filled_cols)
+        lines_cleared = len(filled_rows) + len(filled_cols)
+
+        if len(filled_rows):
+            self.grid[filled_rows, :] = 0
+        if len(filled_cols):
             self.grid[:, filled_cols] = 0
-            
-        # Проверка на полное очищение (Perfect Clear)
-        is_clear = np.sum(self.grid) == 0
-        
-        return lines_cleared, is_clear
+
+        is_perfect_clear = np.sum(self.grid) == 0
+
+        return lines_cleared, is_perfect_clear
 
     def has_valid_moves(self, pieces):
-        """Проверяет, можно ли разместить хоть одну фигуру из списка"""
+        """
+        Проверяет, можно ли разместить хоть одну фигуру из списка матриц numpy.
+        """
         for piece in pieces:
             for y in range(self.size):
                 for x in range(self.size):
                     if self.can_place(piece, x, y):
                         return True
         return False
+
+    def compute_action_mask(self, piece_pool, current_piece_indices, board_size):
+        """
+        Вычисляет булеву маску валидных действий для MaskablePPO.
+        Размер маски: 3 * board_size * board_size.
+        """
+        mask = np.zeros(3 * board_size * board_size, dtype=bool)
+        for slot, pool_idx in enumerate(current_piece_indices):
+            piece = piece_pool[pool_idx]
+            for y in range(board_size):
+                for x in range(board_size):
+                    if self.can_place(piece, x, y):
+                        action_id = slot * board_size * board_size + y * board_size + x
+                        mask[action_id] = True
+        return mask
