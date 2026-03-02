@@ -10,10 +10,9 @@ from stable_baselines3.common.callbacks import (
     BaseCallback,
 )
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
-
 from config import REWARD, ENV, LOGGING, TRAIN
-
 from block_puzzle_env.environment import BlockPuzzleEnv
+from logger import TrainingLogger
 
 # ------------------------------------------------------------------ #
 #  Вспомогательные функции
@@ -80,13 +79,14 @@ def train():
 
     n_envs = TRAIN.get("n_envs", 8)
 
+    # Выводим сообщение ДО создания логгера, чтобы оно не попало в файл
     print(f"[train] Создаём {n_envs} параллельных окружений...")
+    
     vec_env = SubprocVecEnv([make_env(rank=i, seed=42) for i in range(n_envs)])
     vec_env = VecMonitor(vec_env)
 
     policy_kwargs = dict(
         net_arch=TRAIN.get("net_arch", [256, 256]),
-        # activation_fn можно добавить: activation_fn=th.nn.ReLU
     )
 
     model = MaskablePPO(
@@ -118,18 +118,45 @@ def train():
     ]
 
     total_timesteps = TRAIN.get("total_timesteps", 5_000_000)
-    print(f"[train] Начинаем обучение на {total_timesteps:,} шагов...")
-
-    model.learn(
-        total_timesteps=total_timesteps,
-        callback=callbacks,
-        tb_log_name=LOGGING["run_name"],
-        reset_num_timesteps=True,
-        progress_bar=True,
-    )
-
-    model.save(LOGGING["save_path"])
-    print(f"[train] Модель сохранена: {LOGGING['save_path']}.zip")
+    
+    # ---------------------------------------------------------- #
+    # НАСТРОЙКА ЛОГГИРОВАНИЯ
+    # ---------------------------------------------------------- #
+    log_file_path = os.path.join(LOGGING["tensorboard_log"], LOGGING["run_name"], "training_console.log")
+    
+    with TrainingLogger(log_file_path) as t_logger:
+        # 1. Шапка
+        t_logger.log_header()
+        
+        # 2. Информация о модели (Алгоритм + Архитектура)
+        t_logger.log_model_info(model)
+        
+        # 3. Параметры конфигурации
+        t_logger.log_params({
+            "TRAIN": TRAIN,
+            "REWARD": REWARD,
+            "ENV": ENV
+        })
+        
+        # 4. Перехват вывода (stdout + stderr)
+        t_logger.start_capture()
+        
+        try:
+            # Это сообщение теперь попадет в лог
+            print(f"[train] Начинаем обучение на {total_timesteps:,} шагов...")
+            
+            model.learn(
+                total_timesteps=total_timesteps,
+                callback=callbacks,
+                tb_log_name=LOGGING["run_name"],
+                reset_num_timesteps=True,
+                progress_bar=True,
+            )
+            model.save(LOGGING["save_path"])
+            print(f"[train] Модель сохранена: {LOGGING['save_path']}.zip")
+        finally:
+            t_logger.stop_capture()
+            
     vec_env.close()
 
 
