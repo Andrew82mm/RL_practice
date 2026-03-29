@@ -39,23 +39,35 @@ def make_env(rank: int = 0, seed: int = 0):
 
 class EpisodeStatsCallback(BaseCallback):
     """
-    Собирает ep_lines_cleared, ep_perfect_clears, ep_pieces_placed из info и логирует средние значения в TensorBoard.
+    Собирает ep_lines_cleared, ep_perfect_clears, ep_pieces_placed из info
+    ТОЛЬКО при завершении эпизода (done=True) и логирует средние значения
+    в TensorBoard.
+
+    ИСПРАВЛЕНИЕ: Предыдущая версия использовала info.get("final_info") — это
+    API gymnasium.VectorEnv, которого нет в SB3's SubprocVecEnv. В результате
+    ep_* метрики собирались на каждом шаге (промежуточные значения), а не
+    только по завершению эпизода.
+    Правильный способ в SB3 — фильтровать по self.locals["dones"].
     """
 
     def __init__(self, verbose: int = 0):
         super().__init__(verbose)
-        self._lines: list[int] = []
+        self._lines:   list[int] = []
         self._perfect: list[int] = []
-        self._placed: list[int] = []
+        self._placed:  list[int] = []
 
     def _on_step(self) -> bool:
-        for info in self.locals.get("infos", []):
-            # VecEnv оборачивает финальные info в "final_info" при done=True
-            ep_info = info.get("final_info") or info
-            if "ep_lines_cleared" in ep_info:
-                self._lines.append(ep_info["ep_lines_cleared"])
-                self._perfect.append(ep_info["ep_perfect_clears"])
-                self._placed.append(ep_info["ep_pieces_placed"])
+        # В SB3's SubprocVecEnv при done=True среда авто-ресетится,
+        # но info содержит данные терминального шага (до ресета).
+        # Фильтруем строго по dones, чтобы логировать только финальные метрики.
+        dones = self.locals.get("dones", [])
+        infos = self.locals.get("infos", [])
+
+        for info, done in zip(infos, dones):
+            if done and "ep_lines_cleared" in info:
+                self._lines.append(info["ep_lines_cleared"])
+                self._perfect.append(info["ep_perfect_clears"])
+                self._placed.append(info["ep_pieces_placed"])
 
         log_interval = LOGGING.get("log_interval", 10)
         if len(self._lines) >= log_interval:
@@ -79,9 +91,8 @@ def train():
 
     n_envs = TRAIN.get("n_envs", 8)
 
-    # Выводим сообщение ДО создания логгера, чтобы оно не попало в файл
     print(f"[train] Создаём {n_envs} параллельных окружений...")
-    
+
     vec_env = SubprocVecEnv([make_env(rank=i, seed=42) for i in range(n_envs)])
     vec_env = VecMonitor(vec_env)
 
@@ -118,33 +129,27 @@ def train():
     ]
 
     total_timesteps = TRAIN.get("total_timesteps", 5_000_000)
-    
+
     # ---------------------------------------------------------- #
     # НАСТРОЙКА ЛОГГИРОВАНИЯ
     # ---------------------------------------------------------- #
-    log_file_path = os.path.join(LOGGING["tensorboard_log"], LOGGING["run_name"], "training_console.log")
-    
+    log_file_path = os.path.join(
+        LOGGING["tensorboard_log"], LOGGING["run_name"], "training_console.log"
+    )
+
     with TrainingLogger(log_file_path) as t_logger:
-        # 1. Шапка
         t_logger.log_header()
-        
-        # 2. Информация о модели (Алгоритм + Архитектура)
         t_logger.log_model_info(model)
-        
-        # 3. Параметры конфигурации
         t_logger.log_params({
             "TRAIN": TRAIN,
             "REWARD": REWARD,
-            "ENV": ENV
+            "ENV": ENV,
         })
-        
-        # 4. Перехват вывода (stdout + stderr)
         t_logger.start_capture()
-        
+
         try:
-            # Это сообщение теперь попадет в лог
             print(f"[train] Начинаем обучение на {total_timesteps:,} шагов...")
-            
+
             model.learn(
                 total_timesteps=total_timesteps,
                 callback=callbacks,
@@ -156,7 +161,7 @@ def train():
             print(f"[train] Модель сохранена: {LOGGING['save_path']}.zip")
         finally:
             t_logger.stop_capture()
-            
+
     vec_env.close()
 
 
