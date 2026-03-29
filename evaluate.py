@@ -165,7 +165,7 @@ def main():
                     action, _ = ppo_model.predict(
                         obs, action_masks=mask, deterministic=True
                     )
-                    return int(action)
+                    return action.item()
 
             agents["PPO (MaskablePPO)"] = PPOAgent()
             print(f"[evaluate] Model loaded: {args.model}")

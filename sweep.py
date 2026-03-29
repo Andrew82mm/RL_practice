@@ -254,6 +254,8 @@ class SweepMetricsCallback(BaseCallback):
         }
 
 
+# ... (imports)
+
 # ================================================================== #
 #  Фабрика окружений с инжектированным REWARD
 # ================================================================== #
@@ -266,15 +268,17 @@ def make_env_factory(reward_cfg: dict, rank: int = 0, seed: int = 42):
     def _init():
         # Патчим глобальный REWARD перед созданием среды
         import config as cfg
-        original_reward = dict(cfg.REWARD)
+        
+        # ВАЖНО: Сначала очищаем, потом обновляем, чтобы применить награды полностью
+        cfg.REWARD.clear()
         cfg.REWARD.update(reward_cfg)
 
         env = BlockPuzzleEnv()
 
-        # Восстанавливаем оригинал после создания
-        cfg.REWARD.clear()
-        cfg.REWARD.update(original_reward)
-
+        # ВНИМАНИЕ: Не восстанавливаем оригинал здесь!
+        # Среда использует cfg.REWARD динамически внутри step().
+        # Поскольку это отдельный процесс (SubprocVecEnv), патч останется на всё время обучения.
+        
         env = ActionMasker(env, lambda e: e.action_masks())
         env.reset(seed=seed + rank)
         return env
@@ -304,7 +308,10 @@ def quick_eval(model_path: str, n_episodes: int, seed: int) -> dict[str, float]:
         while not done:
             mask = env.action_masks()[np.newaxis]
             action, _ = model.predict(obs[np.newaxis], action_masks=mask, deterministic=True)
-            obs, _, terminated, truncated, info = env.step(int(action))
+            
+            # ИСПРАВЛЕНИЕ: используем .item() для получения скаляра из массива
+            obs, _, terminated, truncated, info = env.step(action.item())
+            
             done = terminated or truncated
 
         lines_list.append(info["ep_lines_cleared"])
@@ -317,7 +324,6 @@ def quick_eval(model_path: str, n_episodes: int, seed: int) -> dict[str, float]:
         "pieces":  float(np.mean(pieces_list)),
         "perfect": float(np.mean(perfect_list)),
     }
-
 
 # ================================================================== #
 #  Запуск одной конфигурации
