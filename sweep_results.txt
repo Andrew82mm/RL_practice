@@ -1,23 +1,23 @@
-Sweep: 2026-03-29 16:10:16
+Sweep: 2026-04-07 10:17:19
 Timesteps per config: 100,000
-Total time: 12.6 min
+Total time: 12.0 min
 
 ==================================================================================================
   SWEEP RESULTS  |  Sorted by eval/lines  |  7 configs
 ==================================================================================================
   #   Name                    Train lines  Train pieces  Eval lines  Eval pieces     Time
 --------------------------------------------------------------------------------------------------
-  1   high_entropy                  1.76        16.09        2.76        18.77     102s
-  2   linear_lines                  1.95        16.79        2.66        18.48     101s
-  3   no_place_reward               1.95        16.55        2.41        17.90     102s
-  4   per_cell_penalty              1.90        16.52        2.34        17.26     101s
-  5   heavy_gameover                1.71        16.09        2.26        17.16     102s
-  6   baseline                      1.68        16.09        2.22        17.95     102s
-  7   deeper_mlp                    2.00        16.91        2.09        17.04     126s
+  1   heavy_gameover                1.94        16.73        2.84        18.82      96s
+  2   high_entropy                  1.99        16.84        2.68        18.50      98s
+  3   baseline                      1.86        16.34        2.63        18.22      96s
+  4   linear_lines                  2.00        16.77        2.48        18.19      98s
+  5   deeper_mlp                    2.04        16.82        2.32        17.76     120s
+  6   per_cell_penalty              1.84        16.38        2.27        17.48      97s
+  7   no_place_reward               1.80        16.25        2.16        17.63      98s
 --------------------------------------------------------------------------------------------------
 
-  WINNER: high_entropy
-  Eval lines: 2.76  |  Eval pieces: 18.77  |  Eval perfect: 0.010
+  WINNER: heavy_gameover
+  Eval lines: 2.84  |  Eval pieces: 18.82  |  Eval perfect: 0.000
 
   Winning reward config:
     place_piece: 0.05
@@ -25,11 +25,11 @@ Total time: 12.6 min
     combo_multiplier: 2.0
     perfect_clear: 15.0
     invalid_move: -2.0
-    game_over: -3.0
+    game_over: -10.0
     game_over_per_cell: 0.0
 
   Winning train overrides:
-    ent_coef: 0.1
+    ent_coef: 0.03
     learning_rate: 0.0003
     net_arch: [256, 256]
 ==================================================================================================

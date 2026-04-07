@@ -17,7 +17,6 @@
 ├── config.py                # Все параметры: reward shaping, PPO, MLP/CNN конфиги
 ├── cnn_extractor.py         # Кастомный SmallCNN для поля 8×8 (заменяет NatureCNN)
 ├── run_training.py          # Единая точка запуска обучения (MLP / CNN)
-├── train.py                 # Устаревший запускатель (оставлен для совместимости)
 ├── baselines.py             # RandomAgent и HeuristicAgent (математический baseline)
 ├── evaluate.py              # Сравнение агентов по метрикам
 ├── play_manual.py           # Ручная игра через консоль
