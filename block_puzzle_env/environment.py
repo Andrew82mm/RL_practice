@@ -162,13 +162,20 @@ class BlockPuzzleEnv(gym.Env):
         lines_cleared, is_perfect_clear = self.board.clear_lines_and_score()
 
         if lines_cleared > 0:
-            # Combo: чем больше линий за раз, тем выгоднее
-            reward += REWARD["line_cleared"] * lines_cleared * (REWARD["combo_multiplier"] ** (lines_cleared - 1))
+            # Combo: чем больше линий за раз, тем выгоднее.
+            # combo_multiplier=1.0 — линейная шкала (без бонуса).
+            # combo_multiplier=0   — НЕВЕРНО: 2+ линий дают нулевую награду (0^1=0).
+            combo = REWARD["combo_multiplier"] if REWARD["combo_multiplier"] > 0 else 1.0
+            reward += REWARD["line_cleared"] * lines_cleared * (combo ** (lines_cleared - 1))
             self._ep_lines_cleared += lines_cleared
 
         if is_perfect_clear:
             reward += REWARD["perfect_clear"]
             self._ep_perfect_clears += 1
+
+        # --- Штраф за заполненность доски (плотный сигнал) ---
+        density = float(np.sum(self.board.grid)) / (self.board_size ** 2)
+        reward += REWARD["board_density"] * density
 
         # --- Убираем использованную фигуру ---
         self.current_pieces.pop(slot_idx)
