@@ -12,9 +12,12 @@ class BlockPuzzleEnv(gym.Env):
     Block Puzzle окружение.
 
     Observation Space:
-        Box(float32, shape=(4, 8, 8)) — 4 канала:
-            0: игровое поле
+        Box(float32, shape=(6, 8, 8)) — 6 каналов:
+            0: игровое поле (binary)
             1-3: текущие три фигуры (в левом верхнем углу своего канала)
+            4: заполненность строк — row_fill[i] broadcast по всей строке i
+            5: заполненность столбцов — col_fill[j] broadcast по всему столбцу j
+        Каналы 4-5 дают критику и актору явный сигнал о прогрессе к очистке.
         ВАЖНО: CnnPolicy в stable-baselines3 требует float32.
         Канал (H, W) интерпретируется как (C, H, W).
 
@@ -42,9 +45,10 @@ class BlockPuzzleEnv(gym.Env):
         )
 
         # float32 обязателен для CnnPolicy
+        # 6 каналов: board + 3 pieces + row_fills + col_fills
         self.observation_space = spaces.Box(
             low=0.0, high=1.0,
-            shape=(4, self.board_size, self.board_size),
+            shape=(6, self.board_size, self.board_size),
             dtype=np.float32,
         )
 
@@ -61,12 +65,18 @@ class BlockPuzzleEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self) -> np.ndarray:
-        obs = np.zeros((4, self.board_size, self.board_size), dtype=np.float32)
+        obs = np.zeros((6, self.board_size, self.board_size), dtype=np.float32)
         obs[0] = self.board.grid.astype(np.float32)
         for i, piece_idx in enumerate(self.current_pieces):
             piece = self.piece_pool[piece_idx]
             h, w = piece.shape
             obs[i + 1, :h, :w] = piece.astype(np.float32)
+        # Канал 4: заполненность каждой строки (broadcast по ширине)
+        row_fills = self.board.grid.sum(axis=1).astype(np.float32) / self.board_size
+        obs[4] = row_fills[:, np.newaxis]  # (8,1) → broadcast to (8,8)
+        # Канал 5: заполненность каждого столбца (broadcast по высоте)
+        col_fills = self.board.grid.sum(axis=0).astype(np.float32) / self.board_size
+        obs[5] = col_fills[np.newaxis, :]  # (1,8) → broadcast to (8,8)
         return obs
 
     def _pieces_matrices(self) -> list[np.ndarray]:
@@ -157,6 +167,21 @@ class BlockPuzzleEnv(gym.Env):
         self.board.place_piece(piece, x, y)
         reward += REWARD["place_piece"]
         self._ep_pieces_placed += 1
+
+        # --- Потенциальная награда за клетки (cell_potential) ---
+        # Для каждой клетки фигуры: чем заполненнее её строка/столбец ПОСЛЕ
+        # размещения, тем выше награда. Максимум = 1.0 когда клетка завершает
+        # строку (row_fill=1.0) — непосредственно перед очисткой.
+        # Даёт критику плотный state-dependent сигнал о прогрессе к очистке.
+        cell_reward = 0.0
+        for pr in range(piece.shape[0]):
+            for pc in range(piece.shape[1]):
+                if piece[pr, pc]:
+                    r, c = y + pr, x + pc
+                    row_fill = float(np.sum(self.board.grid[r])) / self.board_size
+                    col_fill = float(np.sum(self.board.grid[:, c])) / self.board_size
+                    cell_reward += (row_fill + col_fill) / 2.0
+        reward += REWARD["cell_potential"] * cell_reward
 
         # --- Одновременная очистка строк и столбцов ---
         lines_cleared, is_perfect_clear = self.board.clear_lines_and_score()
