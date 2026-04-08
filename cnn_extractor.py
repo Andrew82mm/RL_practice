@@ -13,12 +13,12 @@ cnn_extractor.py — кастомный CNN экстрактор признак�
     Используем страйд=1 и padding=1, чтобы сохранить spatial размерность
     8×8 через все свёрточные слои.
 
-Архитектура (вход: FloatTensor[B, 4, 8, 8]):
+Архитектура (вход: FloatTensor[B, C, 8, 8]):
 
     ┌──────────────────────────────────────────────┐
-    │  Conv2d(4→32,  3×3, pad=1) + BN + ReLU       │  → (B, 32, 8, 8)
-    │  Conv2d(32→64, 3×3, pad=1) + BN + ReLU       │  → (B, 64, 8, 8)
-    │  Conv2d(64→64, 3×3, pad=1) + BN + ReLU       │  → (B, 64, 8, 8)
+    │  Conv2d(C→32,  3×3, pad=1) + ReLU            │  → (B, 32, 8, 8)
+    │  Conv2d(32→64, 3×3, pad=1) + ReLU            │  → (B, 64, 8, 8)
+    │  Conv2d(64→64, 3×3, pad=1) + ReLU            │  → (B, 64, 8, 8)
     │  Flatten                                      │  → (B, 4096)
     │  Linear(4096 → features_dim) + ReLU           │  → (B, features_dim)
     └──────────────────────────────────────────────┘
@@ -26,10 +26,12 @@ cnn_extractor.py — кастомный CNN экстрактор признак�
     features_dim по умолчанию = 256 (задаётся в CNN_TRAIN["features_dim"]).
     Далее SB3 добавляет MLP-головы actor/critic из net_arch поверх эмбеддинга.
 
-BatchNorm:
-    Добавлен после каждой свёртки для стабилизации обучения.
-    BN хорошо работает с большими batch_size (512 в нашем конфиге).
-    При batch_size < 8 можно заменить на LayerNorm или убрать совсем.
+ВАЖНО — BatchNorm убран намеренно:
+    BN в RL несовместим со схемой rollout→update в SB3.
+    При сборе данных модель в eval() использует running stats,
+    при обновлении — в train() использует batch stats.
+    Расхождение двух режимов искажает advantage и ломает критик.
+    Симптом: clip_fraction > 0.4, EV уходит в минус.
 """
 
 from __future__ import annotations
@@ -60,17 +62,15 @@ class SmallCNN(BaseFeaturesExtractor):
 
         # --- Свёрточный блок ---
         # Все слои: stride=1, padding=1 → spatial размерность не меняется (8→8)
+        # BatchNorm убран: несовместим с чередованием train/eval в SB3 rollout loop
         self.cnn = nn.Sequential(
             nn.Conv2d(n_input_channels, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
             nn.ReLU(),
 
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
             nn.ReLU(),
 
             nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
             nn.ReLU(),
 
             nn.Flatten(),  # (B, 64*H*W)
