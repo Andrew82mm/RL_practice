@@ -198,10 +198,6 @@ class BlockPuzzleEnv(gym.Env):
             reward += REWARD["perfect_clear"]
             self._ep_perfect_clears += 1
 
-        # --- Штраф за заполненность доски (плотный сигнал) ---
-        density = float(np.sum(self.board.grid)) / (self.board_size ** 2)
-        reward += REWARD["board_density"] * density
-
         # --- Убираем использованную фигуру ---
         self.current_pieces.pop(slot_idx)
 
