@@ -245,20 +245,23 @@ def train(
         сохраняет текущую статистику VecNormalize (running mean/std наград).
         Без этого при resume обучение стартует с нуля по статистике,
         что ломает нормализацию в первые итерации после возобновления.
+        Но с ним генерируется абсурдно большое количество .pkl файлов
+        Примерно 57 тысяч за ~500к шагов обучения mlp
         """
         def __init__(self, vec_env_ref, vecnorm_save_dir, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self._vec_env_ref   = vec_env_ref
-            self._vecnorm_dir   = vecnorm_save_dir
+            # Убрал сохранение статистики нормализации до лучших времен
+            #self._vec_env_ref   = vec_env_ref
+            #self._vecnorm_dir   = vecnorm_save_dir
 
         def _on_step(self) -> bool:
             result = super()._on_step()
-            if normalize_reward and isinstance(self._vec_env_ref, VecNormalize):
-                vecnorm_ckpt = os.path.join(
-                    self._vecnorm_dir,
-                    f"{checkpoint_prefix}_{self.num_timesteps}_vecnormalize.pkl"
-                )
-                self._vec_env_ref.save(vecnorm_ckpt)
+            #if normalize_reward and isinstance(self._vec_env_ref, VecNormalize):
+            #   vecnorm_ckpt = os.path.join(
+            #        self._vecnorm_dir,
+            #        f"{checkpoint_prefix}_{self.num_timesteps}_vecnormalize.pkl"
+            #    )
+            #    self._vec_env_ref.save(vecnorm_ckpt)
             return result
 
     callbacks = [
@@ -334,7 +337,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-name", type=str, default=None, metavar="NAME",
         help="Имя запуска. Если не задано — <arch>_<timestamp>"
-    )
+    )   
     parser.add_argument(
         "--timesteps", type=int, default=None, metavar="N",
         help="Переопределить total_timesteps из конфига"
