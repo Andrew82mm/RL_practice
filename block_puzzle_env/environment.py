@@ -12,12 +12,14 @@ class BlockPuzzleEnv(gym.Env):
     Block Puzzle окружение.
 
     Observation Space:
-        Box(float32, shape=(6, 8, 8)) — 6 каналов:
-            0: игровое поле (binary)
-            1-3: текущие три фигуры (в левом верхнем углу своего канала)
-            4: заполненность строк — row_fill[i] broadcast по всей строке i
-            5: заполненность столбцов — col_fill[j] broadcast по всему столбцу j
-        Каналы 4-5 дают критику и актору явный сигнал о прогрессе к очистке.
+        Box(float32, shape=(9, 8, 8)) — 9 каналов:
+            0:   игровое поле (binary)
+            1-3: текущие три фигуры (форма в левом верхнем углу)
+            4:   заполненность строк — row_fill[i] broadcast по всей строке i
+            5:   заполненность столбцов — col_fill[j] broadcast по всему столбцу j
+            6-8: placement heatmap для каждой фигуры:
+                 1.0 в (y,x) если фигуру можно поставить с верхним левым углом в (x,y)
+                 Даёт агенту явную карту допустимых ходов в пространстве доски.
         ВАЖНО: CnnPolicy в stable-baselines3 требует float32.
         Канал (H, W) интерпретируется как (C, H, W).
 
@@ -45,10 +47,18 @@ class BlockPuzzleEnv(gym.Env):
         )
 
         # float32 обязателен для CnnPolicy
-        # 6 каналов: board + 3 pieces + row_fills + col_fills
+        # 9 каналов:
+        #   0:   игровое поле (binary)
+        #   1-3: формы текущих фигур (в левом верхнем углу)
+        #   4:   заполненность строк (row_fill broadcast)
+        #   5:   заполненность столбцов (col_fill broadcast)
+        #   6-8: placement heatmap для каждой фигуры:
+        #        1.0 в клетке (y,x) если фигуру МОЖНО поставить с верхним левым
+        #        углом в (x,y); 0.0 иначе. Даёт агенту явную карту допустимых ходов
+        #        прямо в пространстве доски — не нужно выводить геометрию самому.
         self.observation_space = spaces.Box(
             low=0.0, high=1.0,
-            shape=(6, self.board_size, self.board_size),
+            shape=(9, self.board_size, self.board_size),
             dtype=np.float32,
         )
 
@@ -65,18 +75,27 @@ class BlockPuzzleEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self) -> np.ndarray:
-        obs = np.zeros((6, self.board_size, self.board_size), dtype=np.float32)
+        obs = np.zeros((9, self.board_size, self.board_size), dtype=np.float32)
+        n = self.board_size
+        # Канал 0: игровое поле
         obs[0] = self.board.grid.astype(np.float32)
+        # Каналы 1-3: формы фигур (в левом верхнем углу)
         for i, piece_idx in enumerate(self.current_pieces):
             piece = self.piece_pool[piece_idx]
             h, w = piece.shape
             obs[i + 1, :h, :w] = piece.astype(np.float32)
         # Канал 4: заполненность каждой строки (broadcast по ширине)
-        row_fills = self.board.grid.sum(axis=1).astype(np.float32) / self.board_size
-        obs[4] = row_fills[:, np.newaxis]  # (8,1) → broadcast to (8,8)
+        row_fills = self.board.grid.sum(axis=1).astype(np.float32) / n
+        obs[4] = row_fills[:, np.newaxis]
         # Канал 5: заполненность каждого столбца (broadcast по высоте)
-        col_fills = self.board.grid.sum(axis=0).astype(np.float32) / self.board_size
-        obs[5] = col_fills[np.newaxis, :]  # (1,8) → broadcast to (8,8)
+        col_fills = self.board.grid.sum(axis=0).astype(np.float32) / n
+        obs[5] = col_fills[np.newaxis, :]
+        # Каналы 6-8: placement heatmap — нарезаем из action_mask, которую
+        # compute_action_mask всё равно вычисляет. Так избегаем двойного вызова can_place.
+        mask = self.board.compute_action_mask(self.piece_pool, self.current_pieces, n)
+        for i in range(len(self.current_pieces)):
+            slot_mask = mask[i * n * n : (i + 1) * n * n]
+            obs[6 + i] = slot_mask.reshape(n, n).astype(np.float32)
         return obs
 
     def _pieces_matrices(self) -> list[np.ndarray]:

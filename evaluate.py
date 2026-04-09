@@ -97,7 +97,7 @@ class PPOAgent:
         obs  = env._get_obs()[np.newaxis]
         mask = env.action_masks()[np.newaxis]
         action, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
-        return int(action)
+        return int(action.item())
 
 
 # ================================================================== #
