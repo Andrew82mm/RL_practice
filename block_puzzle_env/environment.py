@@ -3,6 +3,8 @@ from gymnasium import spaces
 import numpy as np
 from collections import deque
 
+from scipy.signal import correlate2d
+
 from .logic import Board
 from .pieces import PIECE_POOL
 from config import REWARD, ENV
@@ -114,36 +116,43 @@ class BlockPuzzleEnv(gym.Env):
         #   cell(y,x) = суммарное число валидных ходов для ОСТАЛЬНЫХ фигур
         #               после размещения фигуры i в (x,y), нормировано на [0,1].
         # Даёт агенту lookahead: "если поставлю сюда — сколько ходов останется другим".
+        #
+        # Реализация через scipy.signal.correlate2d:
+        #   correlate2d(temp, piece_j, mode='valid')[ry, rx]
+        #       = sum(temp[ry:ry+ph, rx:rx+pw] * piece_j)
+        #   > 0 означает overlap → нельзя поставить; == 0 → можно.
+        #   mode='valid' возвращает только позиции где фигура полностью в пределах доски.
+        #   Один C-вызов вместо (n-ph+1)*(n-pw+1) Python-итераций.
         num_pieces = len(self.current_pieces)
         if num_pieces > 1:
+            # Конвертируем доску один раз — copy() внутри цикла будет float32→float32
+            board_f32 = self.board.grid.astype(np.float32)
+
             for i in range(num_pieces):
-                placement_map = obs[6 + i]          # уже вычисленный heatmap
+                placement_map = obs[6 + i]
                 remaining = [j for j in range(num_pieces) if j != i]
                 surv = np.zeros((n, n), dtype=np.float32)
 
-                piece_i = self.piece_pool[self.current_pieces[i]]
+                piece_i = self.piece_pool[self.current_pieces[i]].astype(np.float32)
                 hi, wi = piece_i.shape
 
-                for y in range(n):
-                    for x in range(n):
-                        if placement_map[y, x] == 0.0:
-                            continue
-                        # Симулируем размещение фигуры i на временной копии доски
-                        temp = self.board.grid.copy()
-                        temp[y:y + hi, x:x + wi] += piece_i
+                # Конвертируем оставшиеся фигуры один раз вне (y,x) цикла
+                pieces_j = [
+                    self.piece_pool[self.current_pieces[j]].astype(np.float32)
+                    for j in remaining
+                ]
+                norm = float(len(remaining) * n * n)
 
-                        total_valid = 0
-                        for j in remaining:
-                            piece_j = self.piece_pool[self.current_pieces[j]]
-                            pjh, pjw = piece_j.shape
-                            for ry in range(n - pjh + 1):
-                                for rx in range(n - pjw + 1):
-                                    area = temp[ry:ry + pjh, rx:rx + pjw]
-                                    if not np.any((area & piece_j) != 0):
-                                        total_valid += 1
+                # Итерируем только по валидным позициям, пропуская нули
+                for y, x in np.argwhere(placement_map > 0):
+                    temp = board_f32.copy()
+                    temp[y:y + hi, x:x + wi] += piece_i
 
-                        # Нормируем: делим на (число оставшихся фигур × n²)
-                        surv[y, x] = total_valid / (len(remaining) * n * n)
+                    total_valid = sum(
+                        int((correlate2d(temp, pj, mode='valid') == 0).sum())
+                        for pj in pieces_j
+                    )
+                    surv[y, x] = total_valid / norm
 
                 obs[9 + i] = surv
 
