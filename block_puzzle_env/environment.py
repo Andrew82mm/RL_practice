@@ -1,6 +1,7 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+from collections import deque
 
 from .logic import Board
 from .pieces import PIECE_POOL
@@ -12,14 +13,21 @@ class BlockPuzzleEnv(gym.Env):
     Block Puzzle окружение.
 
     Observation Space:
-        Box(float32, shape=(9, 8, 8)) — 9 каналов:
-            0:   игровое поле (binary)
-            1-3: текущие три фигуры (форма в левом верхнем углу)
-            4:   заполненность строк — row_fill[i] broadcast по всей строке i
-            5:   заполненность столбцов — col_fill[j] broadcast по всему столбцу j
-            6-8: placement heatmap для каждой фигуры:
-                 1.0 в (y,x) если фигуру можно поставить с верхним левым углом в (x,y)
-                 Даёт агенту явную карту допустимых ходов в пространстве доски.
+        Box(float32, shape=(14, 8, 8)) — 14 каналов:
+            0:    игровое поле (binary)
+            1-3:  текущие три фигуры (форма в левом верхнем углу)
+            4:    заполненность строк — row_fill[i] broadcast по всей строке i
+            5:    заполненность столбцов — col_fill[j] broadcast по всему столбцу j
+            6-8:  placement heatmap для каждой фигуры:
+                  1.0 в (y,x) если фигуру можно поставить с верхним левым углом в (x,y)
+            9-11: survivability heatmap для каждой фигуры:
+                  для каждой валидной позиции фигуры i — сколько суммарно
+                  валидных ходов остаётся у ОСТАЛЬНЫХ фигур после этого размещения,
+                  нормировано на [0, 1]. Даёт lookahead внутри раунда.
+            12:   largest empty blob map — бинарная маска крупнейшей связной
+                  компоненты пустых клеток. Агент видит "территорию".
+            13:   dead zone mask — бинарная маска клеток в пустых компонентах,
+                  куда не влезет ни одна фигура из пула. Гарантированный балласт.
         ВАЖНО: CnnPolicy в stable-baselines3 требует float32.
         Канал (H, W) интерпретируется как (C, H, W).
 
@@ -47,18 +55,18 @@ class BlockPuzzleEnv(gym.Env):
         )
 
         # float32 обязателен для CnnPolicy
-        # 9 каналов:
-        #   0:   игровое поле (binary)
-        #   1-3: формы текущих фигур (в левом верхнем углу)
-        #   4:   заполненность строк (row_fill broadcast)
-        #   5:   заполненность столбцов (col_fill broadcast)
-        #   6-8: placement heatmap для каждой фигуры:
-        #        1.0 в клетке (y,x) если фигуру МОЖНО поставить с верхним левым
-        #        углом в (x,y); 0.0 иначе. Даёт агенту явную карту допустимых ходов
-        #        прямо в пространстве доски — не нужно выводить геометрию самому.
+        # 14 каналов (Gen 3):
+        #   0:    игровое поле (binary)
+        #   1-3:  формы текущих фигур (в левом верхнем углу)
+        #   4:    заполненность строк (row_fill broadcast)
+        #   5:    заполненность столбцов (col_fill broadcast)
+        #   6-8:  placement heatmap для каждой фигуры
+        #   9-11: survivability heatmap для каждой фигуры (lookahead внутри раунда)
+        #   12:   largest empty blob map
+        #   13:   dead zone mask
         self.observation_space = spaces.Box(
             low=0.0, high=1.0,
-            shape=(9, self.board_size, self.board_size),
+            shape=(14, self.board_size, self.board_size),
             dtype=np.float32,
         )
 
@@ -75,28 +83,179 @@ class BlockPuzzleEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self) -> np.ndarray:
-        obs = np.zeros((9, self.board_size, self.board_size), dtype=np.float32)
+        obs = np.zeros((14, self.board_size, self.board_size), dtype=np.float32)
         n = self.board_size
+
         # Канал 0: игровое поле
         obs[0] = self.board.grid.astype(np.float32)
+
         # Каналы 1-3: формы фигур (в левом верхнем углу)
         for i, piece_idx in enumerate(self.current_pieces):
             piece = self.piece_pool[piece_idx]
             h, w = piece.shape
             obs[i + 1, :h, :w] = piece.astype(np.float32)
+
         # Канал 4: заполненность каждой строки (broadcast по ширине)
         row_fills = self.board.grid.sum(axis=1).astype(np.float32) / n
         obs[4] = row_fills[:, np.newaxis]
+
         # Канал 5: заполненность каждого столбца (broadcast по высоте)
         col_fills = self.board.grid.sum(axis=0).astype(np.float32) / n
         obs[5] = col_fills[np.newaxis, :]
-        # Каналы 6-8: placement heatmap — нарезаем из action_mask, которую
-        # compute_action_mask всё равно вычисляет. Так избегаем двойного вызова can_place.
+
+        # Каналы 6-8: placement heatmap (из action_mask — нет дублирования can_place)
         mask = self.board.compute_action_mask(self.piece_pool, self.current_pieces, n)
         for i in range(len(self.current_pieces)):
             slot_mask = mask[i * n * n : (i + 1) * n * n]
             obs[6 + i] = slot_mask.reshape(n, n).astype(np.float32)
+
+        # Каналы 9-11: survivability heatmap
+        # Для каждой валидной позиции фигуры i:
+        #   cell(y,x) = суммарное число валидных ходов для ОСТАЛЬНЫХ фигур
+        #               после размещения фигуры i в (x,y), нормировано на [0,1].
+        # Даёт агенту lookahead: "если поставлю сюда — сколько ходов останется другим".
+        num_pieces = len(self.current_pieces)
+        if num_pieces > 1:
+            for i in range(num_pieces):
+                placement_map = obs[6 + i]          # уже вычисленный heatmap
+                remaining = [j for j in range(num_pieces) if j != i]
+                surv = np.zeros((n, n), dtype=np.float32)
+
+                piece_i = self.piece_pool[self.current_pieces[i]]
+                hi, wi = piece_i.shape
+
+                for y in range(n):
+                    for x in range(n):
+                        if placement_map[y, x] == 0.0:
+                            continue
+                        # Симулируем размещение фигуры i на временной копии доски
+                        temp = self.board.grid.copy()
+                        temp[y:y + hi, x:x + wi] += piece_i
+
+                        total_valid = 0
+                        for j in remaining:
+                            piece_j = self.piece_pool[self.current_pieces[j]]
+                            pjh, pjw = piece_j.shape
+                            for ry in range(n - pjh + 1):
+                                for rx in range(n - pjw + 1):
+                                    area = temp[ry:ry + pjh, rx:rx + pjw]
+                                    if not np.any((area & piece_j) != 0):
+                                        total_valid += 1
+
+                        # Нормируем: делим на (число оставшихся фигур × n²)
+                        surv[y, x] = total_valid / (len(remaining) * n * n)
+
+                obs[9 + i] = surv
+
+        # Канал 12: бинарная маска крупнейшей связной компоненты пустых клеток.
+        # "Территория" — куда стремиться ставить фигуры.
+        obs[12] = self._largest_empty_blob()
+
+        # Канал 13: маска мёртвых зон — пустых областей куда не влезет
+        # ни одна фигура из полного пула. Гарантированный балласт.
+        obs[13] = self._dead_zone_mask()
+
         return obs
+
+    def _largest_empty_blob(self) -> np.ndarray:
+        """BFS: находит крупнейшую связную компоненту пустых клеток, возвращает её бинарную маску."""
+        n = self.board_size
+        empty = (self.board.grid == 0)
+        visited = np.zeros((n, n), dtype=bool)
+        best: list[tuple[int, int]] = []
+
+        for sy in range(n):
+            for sx in range(n):
+                if not empty[sy, sx] or visited[sy, sx]:
+                    continue
+                component: list[tuple[int, int]] = []
+                q: deque[tuple[int, int]] = deque()
+                q.append((sy, sx))
+                visited[sy, sx] = True
+                while q:
+                    cy, cx = q.popleft()
+                    component.append((cy, cx))
+                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        ny, nx = cy + dy, cx + dx
+                        if 0 <= ny < n and 0 <= nx < n and empty[ny, nx] and not visited[ny, nx]:
+                            visited[ny, nx] = True
+                            q.append((ny, nx))
+                if len(component) > len(best):
+                    best = component
+
+        channel = np.zeros((n, n), dtype=np.float32)
+        for y, x in best:
+            channel[y, x] = 1.0
+        return channel
+
+    def _dead_zone_mask(self) -> np.ndarray:
+        """
+        BFS по пустым клеткам. Для каждой связной компоненты проверяет:
+        может ли хоть одна из ТЕКУЩИХ фигур быть размещена так,
+        чтобы затронуть эту компоненту. Если нет — компонента мёртвая для этого раунда.
+
+        Намеренно проверяем текущие фигуры, а не полный пул: в пуле есть 1×1 фигура,
+        которая влезает в любую клетку → полный пул даёт всегда 0. Текущие фигуры
+        дают динамичный и полезный сигнал: "куда не влезет ни одна из ваших трёх фигур".
+        """
+        if not self.current_pieces:
+            return np.zeros((self.board_size, self.board_size), dtype=np.float32)
+
+        n = self.board_size
+        empty = (self.board.grid == 0)
+        visited = np.zeros((n, n), dtype=bool)
+        channel = np.zeros((n, n), dtype=np.float32)
+
+        # Уникальные фигуры из текущей тройки (без дублей)
+        current_piece_mats = [self.piece_pool[idx] for idx in self.current_pieces]
+
+        for sy in range(n):
+            for sx in range(n):
+                if not empty[sy, sx] or visited[sy, sx]:
+                    continue
+                # BFS — находим компоненту
+                component: list[tuple[int, int]] = []
+                q: deque[tuple[int, int]] = deque()
+                q.append((sy, sx))
+                visited[sy, sx] = True
+                while q:
+                    cy, cx = q.popleft()
+                    component.append((cy, cx))
+                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        ny, nx = cy + dy, cx + dx
+                        if 0 <= ny < n and 0 <= nx < n and empty[ny, nx] and not visited[ny, nx]:
+                            visited[ny, nx] = True
+                            q.append((ny, nx))
+
+                comp_set = set(component)
+                is_dead = True
+
+                # Проверяем каждую из текущих фигур
+                for piece in current_piece_mats:
+                    if not is_dead:
+                        break
+                    ph, pw = piece.shape
+                    for py in range(n - ph + 1):
+                        if not is_dead:
+                            break
+                        for px in range(n - pw + 1):
+                            if not self.board.can_place(piece, px, py):
+                                continue
+                            for dr in range(ph):
+                                for dc in range(pw):
+                                    if piece[dr, dc] and (py + dr, px + dc) in comp_set:
+                                        is_dead = False
+                                        break
+                                if not is_dead:
+                                    break
+                            if not is_dead:
+                                break
+
+                if is_dead:
+                    for y, x in component:
+                        channel[y, x] = 1.0
+
+        return channel
 
     def _pieces_matrices(self) -> list[np.ndarray]:
         return [self.piece_pool[i] for i in self.current_pieces]
@@ -243,6 +402,7 @@ class BlockPuzzleEnv(gym.Env):
                 occupied = int(np.sum(self.board.grid))
                 reward += REWARD["game_over"] + occupied * REWARD["game_over_per_cell"]
             else:
+                reward += REWARD["round_complete"]
                 self.current_pieces = new_pieces
 
         # --- Truncation по лимиту шагов ---
