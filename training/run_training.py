@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import gymnasium as gym
 import numpy as np
@@ -37,7 +40,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, VecNorma
 
 from config import REWARD, ENV, LOGGING, MLP_TRAIN, CNN_TRAIN
 from block_puzzle_env.environment import BlockPuzzleEnv
-from logger import TrainingLogger
+from utils.logger import TrainingLogger
 
 
 # ================================================================== #
@@ -121,7 +124,7 @@ def _build_policy_kwargs(train_cfg: dict) -> dict:
         return {"net_arch": net_arch}
 
     if arch == "cnn":
-        from cnn_extractor import SmallCNN
+        from utils.cnn_extractor import SmallCNN
         return {
             "net_arch": net_arch,
             "features_extractor_class":  SmallCNN,

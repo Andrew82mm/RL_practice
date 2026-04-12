@@ -1,3 +1,8 @@
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from block_puzzle_env.environment import BlockPuzzleEnv
 from block_puzzle_env.pieces import PIECE_POOL

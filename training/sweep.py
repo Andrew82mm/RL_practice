@@ -39,8 +39,8 @@ from typing import Any
 
 import numpy as np
 
-# ── Добавим путь к проекту в sys.path, если запускаем из другой директории
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ── Добавим корень проекта в sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from block_puzzle_env.environment import BlockPuzzleEnv
 from sb3_contrib import MaskablePPO
@@ -544,8 +544,8 @@ def main():
         help="Пропускать конфиги, для которых модель уже сохранена"
     )
     parser.add_argument(
-        "--output", type=str, default="sweep_results.txt",
-        help="Файл для сохранения итоговой таблицы (default: sweep_results.txt)"
+        "--output", type=str, default="results/sweep_results.txt",
+        help="Файл для сохранения итоговой таблицы (default: results/sweep_results.txt)"
     )
     args = parser.parse_args()
 

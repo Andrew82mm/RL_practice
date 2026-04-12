@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import gymnasium as gym
 import numpy as np
@@ -35,9 +38,9 @@ from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, VecNormalize
 
 from block_puzzle_env.environment import BlockPuzzleEnv
-from cnn_extractor import SmallCNN
+from utils.cnn_extractor import SmallCNN
 from config import CNN_TRAIN, LOGGING, REWARD, ENV
-from logger import TrainingLogger
+from utils.logger import TrainingLogger
 
 
 GEN2_MODEL_DEFAULT = "./models/gen2/cnn_gen_2/cnn_2_final.zip"

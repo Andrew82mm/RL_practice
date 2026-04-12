@@ -23,13 +23,16 @@ import argparse
 import glob
 import os
 import re
+import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 from tqdm import tqdm
 
 from block_puzzle_env.environment import BlockPuzzleEnv
-from baselines import RandomAgent, HeuristicAgent
+from evaluation.baselines import RandomAgent, HeuristicAgent
 
 
 # ================================================================== #

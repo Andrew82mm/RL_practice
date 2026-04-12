@@ -17,13 +17,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 from scipy import stats
 from tqdm import tqdm
 
 from block_puzzle_env.environment import BlockPuzzleEnv
-from baselines import HeuristicAgent, RandomAgent
+from evaluation.baselines import HeuristicAgent, RandomAgent
 
 
 # ================================================================== #

@@ -2,8 +2,7 @@
 generate_charts.py — генерирует все иллюстрации для HTML-презентации.
 
 Запуск:
-    cd presentation
-    python generate_charts.py
+    python presentation/generate_charts.py
 """
 
 import os
@@ -14,12 +13,14 @@ import matplotlib.patches as mpatches
 import matplotlib.ticker as mticker
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
-os.makedirs("charts", exist_ok=True)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CHARTS_DIR = os.path.join(_PROJECT_ROOT, "results", "charts")
+os.makedirs(CHARTS_DIR, exist_ok=True)
 
 # Убираем устаревшие файлы
 for _old in ["chart_stability.png", "chart_survival.png", "chart_generations.png",
              "board_demo.png"]:
-    _p = f"charts/{_old}"
+    _p = os.path.join(CHARTS_DIR, _old)
     if os.path.exists(_p):
         os.remove(_p)
         print(f"  ✗ удалён {_p}")
@@ -66,10 +67,11 @@ plt.rcParams.update({
 
 
 def save(name: str):
-    plt.savefig(f"charts/{name}", dpi=150, bbox_inches="tight",
+    path = os.path.join(CHARTS_DIR, name)
+    plt.savefig(path, dpi=150, bbox_inches="tight",
                 facecolor=BG, edgecolor="none")
     plt.close()
-    print(f"  ✓ charts/{name}")
+    print(f"  ✓ results/charts/{name}")
 
 
 def sig_label(p: float) -> str:
@@ -191,10 +193,10 @@ for piece, color, border, label, px in zip(
     ax_p.text(px + 1.5, -0.35, label, ha="center", va="top",
               fontsize=10, color=color, fontweight="bold")
 
-plt.savefig("charts/board_game_demo.png", dpi=150, bbox_inches="tight",
+plt.savefig(os.path.join(CHARTS_DIR, "board_game_demo.png"), dpi=150, bbox_inches="tight",
             facecolor=BG, edgecolor="none")
 plt.close()
-print("  ✓ charts/board_game_demo.png")
+print("  ✓ results/charts/board_game_demo.png")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -817,4 +819,4 @@ plt.tight_layout()
 save("chart_mlp_vs_cnn.png")
 
 
-print("\nВсе графики сгенерированы → папка charts/")
+print("\nВсе графики сгенерированы → results/charts/")

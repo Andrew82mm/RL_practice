@@ -37,6 +37,11 @@ baselines.py — базовые агенты для сравнения с обу
 """
 
 from __future__ import annotations
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from block_puzzle_env.environment import BlockPuzzleEnv
 

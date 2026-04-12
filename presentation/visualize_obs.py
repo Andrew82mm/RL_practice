@@ -17,11 +17,16 @@ visualize_obs.py — визуализация тензора наблюдени�
 
 from __future__ import annotations
 import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.colors import LinearSegmentedColormap
-from baselines import RandomAgent
+from evaluation.baselines import RandomAgent
 from block_puzzle_env.environment import BlockPuzzleEnv
 
 # ------------------------------------------------------------------
