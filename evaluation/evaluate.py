@@ -98,6 +98,12 @@ class PPOAgent:
 
     def select_action(self, env: BlockPuzzleEnv) -> int:
         obs  = env._get_obs()[np.newaxis]
+        # Модели разных поколений обучались с разным числом каналов (6 или 14).
+        # Обрезаем obs до ожидаемого числа каналов, чтобы старые модели работали
+        # в текущей среде.
+        expected_ch = self.model.observation_space.shape[0]
+        if obs.shape[1] != expected_ch:
+            obs = obs[:, :expected_ch, :, :]
         mask = env.action_masks()[np.newaxis]
         action, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
         return int(action.item())

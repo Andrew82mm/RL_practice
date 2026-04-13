@@ -102,12 +102,17 @@ def draw_piece(ax, shape, origin_col, origin_row_y, color, border="#ffaa55",
 
 
 # ── Лог-данные ───────────────────────────────────────────────────────────────
+def _log(rel: str) -> str:
+    return os.path.join(_PROJECT_ROOT, rel)
+
 LOG_PATHS = {
-    "MLP Gen 1": "../models/gen1/mlp_gen_1/training_console.log",
-    "MLP Gen 2": "../models/gen2/mlp_gen_2/training_console.log",
-    "MLP Gen 3": "../models/gen3/training_console.log",
-    "CNN Gen 1": "../models/gen1/cnn_gen_1/training_console.log",
-    "CNN Gen 2": "../models/gen2/cnn_gen_2/training_console.log",
+    "MLP Gen 1": _log("models/gen1/mlp_gen_1/training_console.log"),
+    "MLP Gen 2": _log("models/gen2/mlp_gen_2/training_console.log"),
+    "MLP Gen 3": _log("models/gen3/mlp_gen_3/training_console.log"),
+    "CNN Gen 1": _log("models/gen1/cnn_gen_1/training_console.log"),
+    "CNN Gen 2": _log("models/gen2/cnn_gen_2/training_console.log"),
+    "CNN Gen 3": _log("models/gen3/cnn_gen_3/training_console.log"),
+    "CNN Gen 3 TR": _log("models/gen3/cnn_gen_3_tr/training_console.log"),
 }
 
 _STEPS_RE = re.compile(r'\|\s*total_timesteps\s*\|\s*([\d.e+]+)\s*\|')
@@ -203,8 +208,8 @@ print("  ✓ results/charts/board_game_demo.png")
 # 3. СРАВНЕНИЕ ЛИНИЙ (основной результат)
 # ════════════════════════════════════════════════════════════════════════════
 agents = ["Random", "Heuristic", "MLP\nGen 1", "MLP\nGen 2", "MLP\nGen 3"]
-means  = [1.62,     7.79,        8.22,          10.36,         10.56]
-stds   = [1.93,     7.09,        5.42,           7.03,           6.91]
+means  = [1.79,     8.48,        8.84,           9.88,          11.21]
+stds   = [2.12,     7.60,        5.90,           6.57,           7.68]
 colors = [GREY,     ORANGE,      BLUE_BLOB,      GREEN_HEAT,     PURPLE]
 
 fig, ax = plt.subplots(figsize=(10, 5.0))
@@ -223,8 +228,8 @@ for bar, mean in zip(bars, means):
             f"{mean:.1f}", ha="center", va="bottom",
             fontsize=12, color=WHITE, fontweight="bold")
 
-ax.axhline(7.79, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.4, zorder=2)
-ax.text(4.3, 8.1, "Heuristic baseline", fontsize=10, color=ORANGE, alpha=0.7)
+ax.axhline(8.48, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.4, zorder=2)
+ax.text(4.3, 8.9, "Heuristic baseline", fontsize=10, color=ORANGE, alpha=0.7)
 plt.tight_layout()
 save("chart_lines.png")
 
@@ -272,8 +277,8 @@ save("chart_learning_mlp.png")
 # ════════════════════════════════════════════════════════════════════════════
 # 6. КРИВЫЕ ОБУЧЕНИЯ — CNN
 # ════════════════════════════════════════════════════════════════════════════
-CNN_MODELS = ["CNN Gen 1", "CNN Gen 2"]
-CNN_COLORS = [TEAL, RED_DEAD]
+CNN_MODELS = ["CNN Gen 1", "CNN Gen 2", "CNN Gen 3", "CNN Gen 3 TR"]
+CNN_COLORS = [TEAL, RED_DEAD, PURPLE, YELLOW_HIGH]
 
 fig, ax = plt.subplots(figsize=(11, 5.2))
 
@@ -296,13 +301,6 @@ for name, color in zip(CNN_MODELS, CNN_COLORS):
 ax.axhline(36.1, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.5, zorder=1)
 ax.text(0.05, 37.0, "Heuristic (≈36)", fontsize=10, color=ORANGE, alpha=0.7)
 
-# Плейсхолдер CNN Gen 3
-ax.text(2.6, 15,
-        "CNN Gen 3\nне обучался",
-        ha="center", va="center", fontsize=12, color=MUTED, style="italic",
-        bbox=dict(boxstyle="round,pad=0.5", facecolor=CARD,
-                  edgecolor=MUTED, alpha=0.6))
-
 ax.set_xlabel("Шаги обучения (млн)", fontsize=13, labelpad=8)
 ax.set_ylabel("ep_rew_mean (скользящее среднее)", fontsize=13, labelpad=8)
 ax.set_title("Кривые обучения — CNN агенты", fontsize=14, pad=12)
@@ -317,40 +315,49 @@ save("chart_learning_cnn.png")
 # ДАННЫЕ — статические метрики всех агентов
 # ════════════════════════════════════════════════════════════════════════════
 AGENT_LINES = {
-    "Random":    {"mean": 1.62,  "std": 1.93},
-    "Heuristic": {"mean": 7.79,  "std": 7.09},
-    "MLP Gen 1": {"mean": 8.22,  "std": 5.42},
-    "MLP Gen 2": {"mean": 10.36, "std": 7.03},
-    "MLP Gen 3": {"mean": 10.56, "std": 6.91},
-    "CNN Gen 1": {"mean": 7.10,  "std": 5.89},
-    "CNN Gen 2": {"mean": 9.80,  "std": 6.74},
+    "Random":       {"mean": 1.79,  "std": 2.12},
+    "Heuristic":    {"mean": 8.48,  "std": 7.60},
+    "MLP Gen 1":    {"mean": 8.84,  "std": 5.90},
+    "MLP Gen 2":    {"mean": 9.88,  "std": 6.57},
+    "MLP Gen 3":    {"mean": 11.21, "std": 7.68},
+    "CNN Gen 1":    {"mean": 7.36,  "std": 4.74},
+    "CNN Gen 2":    {"mean": 8.50,  "std": 5.72},
+    "CNN Gen 3":    {"mean": 4.73,  "std": 3.79},
+    "CNN Gen 3 TR": {"mean": 8.85,  "std": 5.66},
 }
+
+
+def _has_data(name: str) -> bool:
+    return AGENT_LINES.get(name, {}).get("mean") is not None
 
 THRESHOLDS = [1, 5, 10, 15, 20, 25, 30]
 SURVIVAL = {
-    "Random":    {1: 0.62, 5: 0.08, 10: 0.01, 15: 0.00, 20: 0.00, 25: 0.00, 30: 0.00},
-    "Heuristic": {1: 0.72, 5: 0.52, 10: 0.31, 15: 0.18, 20: 0.10, 25: 0.05, 30: 0.02},
-    "MLP Gen 1": {1: 0.80, 5: 0.62, 10: 0.35, 15: 0.14, 20: 0.04, 25: 0.01, 30: 0.00},
-    "MLP Gen 2": {1: 0.84, 5: 0.69, 10: 0.45, 15: 0.25, 20: 0.12, 25: 0.05, 30: 0.02},
-    "MLP Gen 3": {1: 0.85, 5: 0.71, 10: 0.47, 15: 0.26, 20: 0.13, 25: 0.05, 30: 0.02},
-    "CNN Gen 1": {1: 0.75, 5: 0.55, 10: 0.28, 15: 0.11, 20: 0.03, 25: 0.01, 30: 0.00},
-    "CNN Gen 2": {1: 0.83, 5: 0.67, 10: 0.43, 15: 0.23, 20: 0.10, 25: 0.04, 30: 0.01},
+    "Random":       {1: 0.66, 5: 0.12, 10: 0.02, 15: 0.00, 20: 0.00, 25: 0.00, 30: 0.00},
+    "Heuristic":    {1: 0.94, 5: 0.64, 10: 0.33, 15: 0.17, 20: 0.09, 25: 0.04, 30: 0.03},
+    "MLP Gen 1":    {1: 0.80, 5: 0.62, 10: 0.35, 15: 0.14, 20: 0.04, 25: 0.01, 30: 0.00},
+    "MLP Gen 2":    {1: 0.84, 5: 0.69, 10: 0.45, 15: 0.25, 20: 0.12, 25: 0.05, 30: 0.02},
+    "MLP Gen 3":    {1: 0.99, 5: 0.85, 10: 0.49, 15: 0.26, 20: 0.14, 25: 0.07, 30: 0.03},
+    "CNN Gen 1":    {1: 0.75, 5: 0.55, 10: 0.28, 15: 0.11, 20: 0.03, 25: 0.01, 30: 0.00},
+    "CNN Gen 2":    {1: 0.83, 5: 0.67, 10: 0.43, 15: 0.23, 20: 0.10, 25: 0.04, 30: 0.01},
+    "CNN Gen 3":    None,
+    "CNN Gen 3 TR": {1: 0.99, 5: 0.78, 10: 0.40, 15: 0.15, 20: 0.06, 25: 0.02, 30: 0.01},
 }
 
 AGENT_COLORS = {
-    "Random":    GREY,
-    "Heuristic": ORANGE,
-    "MLP Gen 1": BLUE_BLOB,
-    "MLP Gen 2": GREEN_HEAT,
-    "MLP Gen 3": PURPLE,
-    "CNN Gen 1": TEAL,
-    "CNN Gen 2": RED_DEAD,
-    "CNN Gen 3": MUTED,
+    "Random":       GREY,
+    "Heuristic":    ORANGE,
+    "MLP Gen 1":    BLUE_BLOB,
+    "MLP Gen 2":    GREEN_HEAT,
+    "MLP Gen 3":    PURPLE,
+    "CNN Gen 1":    TEAL,
+    "CNN Gen 2":    RED_DEAD,
+    "CNN Gen 3":    MUTED,
+    "CNN Gen 3 TR": YELLOW_HIGH,
 }
 
 ALL_AGENTS = ["Random", "Heuristic",
               "MLP Gen 1", "MLP Gen 2", "MLP Gen 3",
-              "CNN Gen 1", "CNN Gen 2", "CNN Gen 3"]
+              "CNN Gen 1", "CNN Gen 2", "CNN Gen 3", "CNN Gen 3 TR"]
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -359,12 +366,12 @@ ALL_AGENTS = ["Random", "Heuristic",
 fig, ax = plt.subplots(figsize=(11, 5.5))
 
 xs = [0] + THRESHOLDS
-for name in ALL_AGENTS:
+_survival_all_agents = [n for n in ALL_AGENTS if n != "CNN Gen 3"]
+for name in _survival_all_agents:
     color = AGENT_COLORS[name]
-    if name == "CNN Gen 3":
-        # плейсхолдер — нулевая пунктирная линия
-        ax.plot(xs, [0] * len(xs), color=MUTED, linewidth=1.2,
-                linestyle=":", alpha=0.5, label="CNN Gen 3 (нет данных)", zorder=1)
+    if SURVIVAL[name] is None:
+        ax.plot(xs, [0] * len(xs), color=color, linewidth=1.2,
+                linestyle=":", alpha=0.5, label=f"{name} (нет данных)", zorder=1)
         continue
 
     rates = SURVIVAL[name]
@@ -402,11 +409,8 @@ save("chart_survival_all.png")
 # CV = std / mean
 CV_DATA = {}
 for name in ALL_AGENTS:
-    if name == "CNN Gen 3":
-        CV_DATA[name] = None
-    else:
-        d = AGENT_LINES[name]
-        CV_DATA[name] = d["std"] / d["mean"]
+    d = AGENT_LINES[name]
+    CV_DATA[name] = d["std"] / d["mean"] if d["mean"] else None
 
 fig, ax = plt.subplots(figsize=(10, 5.5))
 
@@ -417,13 +421,14 @@ cv_vals = [CV_DATA[n] if CV_DATA[n] is not None else 0.0 for n in ALL_AGENTS]
 bars = ax.barh(y_pos, cv_vals, color=bar_colors, alpha=0.85,
                height=0.55, zorder=3)
 
-# Штриховка для CNN Gen 3
-gen3_idx = ALL_AGENTS.index("CNN Gen 3")
-bars[gen3_idx].set_hatch("///")
-bars[gen3_idx].set_alpha(0.30)
+# Штриховка для агентов без данных
+for i, name in enumerate(ALL_AGENTS):
+    if CV_DATA[name] is None:
+        bars[i].set_hatch("///")
+        bars[i].set_alpha(0.30)
 
 for i, (name, cv) in enumerate(zip(ALL_AGENTS, cv_vals)):
-    if name == "CNN Gen 3":
+    if CV_DATA[name] is None:
         ax.text(0.04, i, "нет данных", va="center", fontsize=10,
                 color=MUTED, style="italic")
     else:
@@ -456,33 +461,40 @@ save("chart_stability_all.png")
 # ════════════════════════════════════════════════════════════════════════════
 
 MW_RESULTS = {
-    "MLP Gen 1": (0.534, 0.141),
-    "MLP Gen 2": (0.613, 0.0028),
-    "MLP Gen 3": (0.621, 0.0018),
-    "CNN Gen 1": (0.503, 0.820),
-    "CNN Gen 2": (0.591, 0.011),
+    "MLP Gen 1":    (0.534, 0.141),
+    "MLP Gen 2":    (0.613, 0.0028),
+    "MLP Gen 3":    (0.634, 0.0000),
+    "CNN Gen 1":    (0.503, 0.820),
+    "CNN Gen 2":    (0.591, 0.011),
+    "CNN Gen 3 TR": (0.571, 0.0000),
 }
 COHENS_D = {
-    "MLP Gen 1": +0.07, "MLP Gen 2": +0.37, "MLP Gen 3": +0.40,
-    "CNN Gen 1": -0.10, "CNN Gen 2": +0.30,
+    "MLP Gen 1":    +0.07,
+    "MLP Gen 2":    +0.37,
+    "MLP Gen 3":    +0.348,
+    "CNN Gen 1":    -0.10,
+    "CNN Gen 2":    +0.30,
+    "CNN Gen 3 TR": +0.078,
 }
 BOOTSTRAP_CI = {
-    "MLP Gen 1": (+0.43, -0.72, +1.58),
-    "MLP Gen 2": (+2.57, +1.31, +3.84),
-    "MLP Gen 3": (+2.77, +1.51, +4.03),
-    "CNN Gen 1": (-0.69, -1.93, +0.55),
-    "CNN Gen 2": (+2.01, +0.78, +3.24),
+    "MLP Gen 1":    (+0.43,  -0.72, +1.58),
+    "MLP Gen 2":    (+2.57,  +1.31, +3.84),
+    "MLP Gen 3":    (+2.70,  +2.02, +3.37),
+    "CNN Gen 1":    (-0.69,  -1.93, +0.55),
+    "CNN Gen 2":    (+2.01,  +0.78, +3.24),
+    "CNN Gen 3 TR": (+0.54,  -0.07, +1.16),
 }
 WILCOXON = {
-    "MLP Gen 1": (0.530, 0.092,  +0.5),
-    "MLP Gen 2": (0.600, 0.0012, +2.0),
-    "MLP Gen 3": (0.618, 0.0008, +2.5),
-    "CNN Gen 1": (0.490, 0.620,  -0.5),
-    "CNN Gen 2": (0.578, 0.015,  +1.5),
+    "MLP Gen 1":    (0.530, 0.092,  +0.5),
+    "MLP Gen 2":    (0.600, 0.0012, +2.0),
+    "MLP Gen 3":    (0.594, 0.0000, +2.0),
+    "CNN Gen 1":    (0.490, 0.620,  -0.5),
+    "CNN Gen 2":    (0.578, 0.015,  +1.5),
+    "CNN Gen 3 TR": (0.547, 0.0010, +1.0),
 }
 
 mlp_agents = ["MLP Gen 1", "MLP Gen 2", "MLP Gen 3"]
-cnn_agents = ["CNN Gen 1", "CNN Gen 2", "CNN Gen 3"]
+cnn_agents = ["CNN Gen 1", "CNN Gen 2", "CNN Gen 3 TR"]
 
 
 # ── 9. Mann-Whitney CLES ─────────────────────────────────────────────────────
@@ -494,9 +506,9 @@ for ax, group, title in zip(axes, [mlp_agents, cnn_agents],
                              ["MLP агенты", "CNN агенты"]):
     cles_vals, p_vals, clrs, labels = [], [], [], []
     for name in group:
-        if name == "CNN Gen 3":
+        if name not in MW_RESULTS:
             cles_vals.append(0.0); p_vals.append(None)
-            clrs.append(MUTED); labels.append(name)
+            clrs.append(AGENT_COLORS[name]); labels.append(name)
         else:
             c, p = MW_RESULTS[name]
             cles_vals.append(c); p_vals.append(p)
@@ -508,11 +520,11 @@ for ax, group, title in zip(axes, [mlp_agents, cnn_agents],
 
     for i, (name, p) in enumerate(zip(labels, p_vals)):
         val = cles_vals[i]
-        if name == "CNN Gen 3":
+        if p is None:
             ax.text(0.26, i, "нет данных", va="center", ha="center",
                     fontsize=11, color=MUTED, style="italic")
         else:
-            ax.text(val + 0.008, i, f"{val:.3f}  {sig_label(p)}",
+            ax.text(val + 0.008, i, sig_label(p),
                     va="center", fontsize=11, color=WHITE, fontweight="bold")
 
     ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=12)
@@ -535,8 +547,8 @@ for ax, group, title in zip(axes, [mlp_agents, cnn_agents],
                              ["MLP агенты", "CNN агенты"]):
     d_vals, clrs, labels = [], [], []
     for name in group:
-        if name == "CNN Gen 3":
-            d_vals.append(0.0); clrs.append(MUTED); labels.append(name)
+        if name not in COHENS_D:
+            d_vals.append(0.0); clrs.append(AGENT_COLORS[name]); labels.append(name)
         else:
             d_vals.append(COHENS_D[name])
             clrs.append(AGENT_COLORS[name]); labels.append(name)
@@ -553,7 +565,7 @@ for ax, group, title in zip(axes, [mlp_agents, cnn_agents],
                 fontsize=8, color=col, alpha=0.7, va="top")
 
     for i, (name, d) in enumerate(zip(labels, d_vals)):
-        if name == "CNN Gen 3":
+        if name not in COHENS_D:
             ax.text(0.02, i, "нет данных", va="center", ha="left",
                     fontsize=11, color=MUTED, style="italic")
         else:
@@ -580,7 +592,7 @@ for ax, group, title in zip(axes, [mlp_agents, cnn_agents],
     y = np.arange(len(group))
     labels = []
     for i, name in enumerate(group):
-        if name == "CNN Gen 3":
+        if name not in BOOTSTRAP_CI:
             labels.append(name)
             ax.text(0.0, i, "нет данных", va="center", ha="center",
                     fontsize=11, color=MUTED, style="italic")
@@ -622,9 +634,9 @@ for ax, group, title in zip(axes, [mlp_agents, cnn_agents],
                              ["MLP агенты", "CNN агенты"]):
     wr_vals, p_vals, med_diffs, clrs, labels = [], [], [], [], []
     for name in group:
-        if name == "CNN Gen 3":
+        if name not in WILCOXON:
             wr_vals.append(0.0); p_vals.append(None)
-            med_diffs.append(None); clrs.append(MUTED); labels.append(name)
+            med_diffs.append(None); clrs.append(AGENT_COLORS[name]); labels.append(name)
         else:
             wr, p, md = WILCOXON[name]
             wr_vals.append(wr); p_vals.append(p)
@@ -636,13 +648,13 @@ for ax, group, title in zip(axes, [mlp_agents, cnn_agents],
     ax.axvline(0.5, color=WHITE, linestyle="--", linewidth=1.2, alpha=0.4, zorder=4)
 
     for i, (name, wr, p, md) in enumerate(zip(labels, wr_vals, p_vals, med_diffs)):
-        if name == "CNN Gen 3":
+        if p is None:
             ax.text(0.26, i, "нет данных", va="center", ha="center",
                     fontsize=11, color=MUTED, style="italic")
         else:
-            ax.text(wr + 0.005, i,
+            ax.text(0.36, i + 0.30,
                     f"{wr:.1%}  {sig_label(p)}  (Δmed={md:+.1f})",
-                    va="center", fontsize=10, color=WHITE, fontweight="bold")
+                    va="bottom", fontsize=9, color=WHITE, fontweight="bold")
 
     ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=12)
     ax.set_xlim(0.35, 0.80)
@@ -663,16 +675,20 @@ fig.suptitle("Survival Analysis — P(lines ≥ threshold)",
 
 curve_groups = [
     ("MLP агенты", ["Heuristic", "MLP Gen 1", "MLP Gen 2", "MLP Gen 3"]),
-    ("CNN агенты", ["Heuristic", "CNN Gen 1", "CNN Gen 2"]),
+    ("CNN агенты", ["Heuristic", "CNN Gen 1", "CNN Gen 2", "CNN Gen 3 TR"]),
 ]
 xs = [0] + THRESHOLDS
 for ax, (title, group) in zip(axes, curve_groups):
     for name in group:
-        rates = SURVIVAL[name]
-        ys = [1.0] + [rates[t] for t in THRESHOLDS]
         color = AGENT_COLORS[name]
         lw = 2.5 if name != "Heuristic" else 1.8
         ls = "--" if name == "Heuristic" else "-"
+        if SURVIVAL[name] is None:
+            ax.plot(xs, [0] * len(xs), color=color, linewidth=1.2,
+                    linestyle=":", alpha=0.5, label=f"{name} (нет данных)", zorder=1)
+            continue
+        rates = SURVIVAL[name]
+        ys = [1.0] + [rates[t] for t in THRESHOLDS]
         ax.step(xs, ys, where="post", color=color, linewidth=lw,
                 linestyle=ls, alpha=0.90, label=name, zorder=3)
         ax.plot(THRESHOLDS, [rates[t] for t in THRESHOLDS],
@@ -688,29 +704,21 @@ for ax, (title, group) in zip(axes, curve_groups):
     ax.set_axisbelow(True)
     ax.legend(fontsize=10, framealpha=0.2, loc="upper right")
 
-    if "CNN" in title:
-        ax.text(16, 0.55, "CNN Gen 3\nнет данных",
-                ha="center", va="center", fontsize=11,
-                color=MUTED, style="italic",
-                bbox=dict(boxstyle="round,pad=0.4", facecolor=CARD,
-                          edgecolor=MUTED, alpha=0.7))
-
 plt.tight_layout()
 save("chart_stat_survival_curves.png")
 
 
 # ── 14–15. Сводные таблицы ───────────────────────────────────────────────────
-AGENT_LINES_FULL = {**AGENT_LINES, "CNN Gen 3": {"mean": None, "std": None}}
-
-
 def draw_stat_table(agents_list, title, filename):
     col_labels = ["Агент", "Mean±σ (lines)", "CLES",
                   "p (MW)", "Cohen's d", "Boot CI 95%",
                   "Win Rate", "p (Wilcox)"]
     rows = []
     for name in agents_list:
-        if name == "CNN Gen 3":
-            rows.append([name] + ["—"] * (len(col_labels) - 1))
+        if name not in MW_RESULTS:
+            m = AGENT_LINES[name]
+            mean_std = f"{m['mean']:.2f}±{m['std']:.2f}" if m["mean"] else "—"
+            rows.append([name, mean_std] + ["—"] * (len(col_labels) - 2))
             continue
         m = AGENT_LINES[name]
         cles, p_mw = MW_RESULTS[name]
@@ -779,39 +787,38 @@ draw_stat_table(cnn_agents,
 # ── 16. MLP vs CNN сравнение ─────────────────────────────────────────────────
 fig, ax = plt.subplots(figsize=(10, 5.0))
 
-gen_labels = ["Gen 1", "Gen 2", "Gen 3"]
-mlp_means = [8.22, 10.36, 10.56]; mlp_stds = [5.42, 7.03, 6.91]
-cnn_means = [7.10,  9.80,  None]; cnn_stds = [5.89, 6.74, None]
+# Gen 1, Gen 2, Gen 3 (CNN = CNN Gen 3 TR)
+gen_labels   = ["Gen 1", "Gen 2", "Gen 3"]
+mlp_means    = [8.84,  9.88,  11.21]
+mlp_stds     = [5.90,  6.57,   7.68]
+cnn_means    = [7.36,  8.50,   8.85]
+cnn_stds     = [4.74,  5.72,   5.66]
 x = np.arange(len(gen_labels)); w = 0.35
 
-b_mlp = ax.bar(x - w/2, mlp_means, width=w, color=BLUE_BLOB, alpha=0.85,
+mlp_plot = [v if v else 0 for v in mlp_means]
+b_mlp = ax.bar(x - w/2, mlp_plot, width=w, color=BLUE_BLOB, alpha=0.85,
                label="MLP", zorder=3,
-               yerr=mlp_stds, capsize=6,
+               yerr=[s if s else 0 for s in mlp_stds], capsize=6,
                error_kw={"color": WHITE, "linewidth": 1.4, "alpha": 0.5})
-cnn_plot = [v if v else 0 for v in cnn_means]
-b_cnn = ax.bar(x + w/2, cnn_plot, width=w, color=RED_DEAD, alpha=0.85,
+b_cnn = ax.bar(x + w/2, cnn_means, width=w, color=RED_DEAD, alpha=0.85,
                label="CNN", zorder=3,
-               yerr=[s if s else 0 for s in cnn_stds], capsize=6,
+               yerr=cnn_stds, capsize=6,
                error_kw={"color": WHITE, "linewidth": 1.4, "alpha": 0.5})
 
 for bar, val in zip(b_mlp, mlp_means):
-    ax.text(bar.get_x() + bar.get_width()/2, val + 0.3,
-            f"{val:.1f}", ha="center", va="bottom", fontsize=11, color=WHITE)
-
-for bar, val in zip(b_cnn, cnn_means):
     if val is not None:
         ax.text(bar.get_x() + bar.get_width()/2, val + 0.3,
                 f"{val:.1f}", ha="center", va="bottom", fontsize=11, color=WHITE)
-    else:
-        ax.text(bar.get_x() + bar.get_width()/2, 0.6,
-                "N/A", ha="center", va="bottom", fontsize=10,
-                color=MUTED, style="italic")
 
-ax.axhline(7.79, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.4, zorder=2)
-ax.text(2.6, 8.05, "Heuristic", fontsize=9, color=ORANGE, alpha=0.7)
-ax.set_xticks(x); ax.set_xticklabels(gen_labels, fontsize=13)
+for bar, val in zip(b_cnn, cnn_means):
+    ax.text(bar.get_x() + bar.get_width()/2, val + 0.3,
+            f"{val:.1f}", ha="center", va="bottom", fontsize=11, color=WHITE)
+
+ax.axhline(8.48, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.4, zorder=2)
+ax.text(2.2, 8.7, "Heuristic (8.48)", fontsize=9, color=ORANGE, alpha=0.7)
+ax.set_xticks(x); ax.set_xticklabels(gen_labels, fontsize=12)
 ax.set_ylabel("Линий за игру (среднее ± σ)", fontsize=13, labelpad=10)
-ax.set_title("MLP vs CNN — сравнение по поколениям", fontsize=14, pad=12)
+ax.set_title("MLP vs CNN — сравнение по поколениям\n(CNN Gen 3 = CNN Gen 3 TR)", fontsize=13, pad=12)
 ax.set_ylim(0, 22)
 ax.yaxis.grid(True, alpha=0.25, zorder=0); ax.set_axisbelow(True)
 ax.legend(fontsize=12, framealpha=0.2)
