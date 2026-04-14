@@ -1,0 +1,720 @@
+% Block Puzzle RL — Beamer presentation
+% Compile with: xelatex Block_Puzzle_RL.tex
+\documentclass[aspectratio=169]{beamer}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{russian}
+\setotherlanguage{english}
+\setmainfont{Inter}
+\setsansfont{DejaVu Sans}
+\setmonofont{DejaVu Sans Mono}
+\usepackage{graphicx}
+% multimedia несовместим с xelatex (\pdfmark), используем href
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{tikz}
+\usepackage{hyperref}
+
+\graphicspath{{pictures/}}
+
+% ── Color palette ─────────────────────────────────────────────────────────────
+\definecolor{ThemeBG}{HTML}{0d0d1a}
+\definecolor{ThemeCellFilled}{HTML}{4a90d9}
+\definecolor{ThemeCellEmpty}{HTML}{1a1a30}
+\definecolor{ThemeGridStroke}{HTML}{2a2a50}
+\definecolor{ThemeGreen}{HTML}{27ae60}
+\definecolor{ThemeBlue}{HTML}{2980b9}
+\definecolor{ThemeRed}{HTML}{c0392b}
+\definecolor{ThemeYellow}{HTML}{f39c12}
+\definecolor{ThemePurple}{HTML}{9b59b6}
+\definecolor{ThemeOrange}{HTML}{e67e22}
+\definecolor{ThemeText}{HTML}{e8eaf6}
+\definecolor{ThemeTextMuted}{HTML}{8899bb}
+
+% ── Beamer chrome ─────────────────────────────────────────────────────────────
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+
+% Canvas & text
+\setbeamercolor{background canvas}{bg=ThemeBG}
+\setbeamercolor{normal text}{fg=ThemeText}
+\setbeamercolor{alerted text}{fg=ThemeYellow}
+\setbeamercolor{example text}{fg=ThemeGreen}
+
+% Title page
+\setbeamercolor{title}{fg=ThemeCellFilled}
+\setbeamerfont{title}{size=\LARGE, series=\bfseries}
+\setbeamercolor{subtitle}{fg=ThemeYellow}
+\setbeamerfont{subtitle}{size=\normalsize}
+\setbeamercolor{author}{fg=ThemeTextMuted}
+\setbeamercolor{date}{fg=ThemeTextMuted}
+
+% Frame title with separator rule
+\setbeamercolor{frametitle}{fg=ThemeCellFilled, bg=ThemeBG}
+\setbeamerfont{frametitle}{size=\large, series=\bfseries}
+\setbeamertemplate{frametitle}{%
+  \vspace{0.5ex}%
+  \insertframetitle%
+  \vspace{0.25ex}%
+  \par{\color{ThemeGridStroke}\rule{\textwidth}{0.6pt}}%
+  \vspace{-0.5ex}%
+}
+
+% Structure & bullets
+\setbeamercolor{structure}{fg=ThemeCellFilled}
+\setbeamercolor{itemize item}{fg=ThemeCellFilled}
+\setbeamercolor{itemize subitem}{fg=ThemeGreen}
+\setbeamercolor{itemize subsubitem}{fg=ThemeOrange}
+\setbeamertemplate{itemize item}{\small\raise0.5pt\hbox{$\blacktriangleright$}}
+\setbeamertemplate{itemize subitem}{\small\raise0.5pt\hbox{$\bullet$}}
+
+% Blocks
+\setbeamercolor{block title}{fg=ThemeCellFilled, bg=ThemeGridStroke}
+\setbeamercolor{block body}{fg=ThemeText, bg=ThemeCellEmpty}
+
+% Footline
+\setbeamercolor{footline}{fg=ThemeTextMuted, bg=ThemeBG}
+\setbeamerfont{footline}{size=\tiny}
+\setbeamertemplate{footline}{%
+  \hfill%
+  {\tiny\color{ThemeTextMuted}\insertframenumber\,/\,\inserttotalframenumber}%
+  \hspace{4mm}\vspace{2mm}%
+}
+
+% Table rules color
+\arrayrulecolor{ThemeGridStroke}
+
+% Hyperlink color
+\hypersetup{colorlinks=true, urlcolor=ThemeCellFilled, linkcolor=ThemeCellFilled}
+
+% ── Custom title page ─────────────────────────────────────────────────────────
+\setbeamertemplate{title page}{%
+	\begin{tikzpicture}[remember picture, overlay]
+		
+		% ── Clean background ──────────────────────────────────────────────────
+		\fill[ThemeBG] (current page.south west)
+		rectangle (current page.north east);
+		
+		% ── Subtle accent line ────────────────────────────────────────────────
+		\fill[ThemeBlue!60]
+		([yshift=-2cm]current page.north west)
+		rectangle ([yshift=-1.8cm]current page.north east);
+		
+	\end{tikzpicture}%
+	
+	% ── Top spacing (уменьшили, чтобы поднять контент) ──────────────────────
+	\vspace{1.5cm}
+	
+	\begin{flushleft}
+		
+		% ── Title ─────────────────────────────────────────────────────────────
+		{\usebeamerfont{title}
+			\usebeamercolor[fg]{title}
+			\fontsize{34}{38}\selectfont
+			\inserttitle\par}
+		
+		\vspace{0.8em}
+		
+		% ── Subtitle ──────────────────────────────────────────────────────────
+		{\usebeamerfont{subtitle}
+			\color{ThemeGridStroke}
+			\large
+			\insertsubtitle\par}
+		
+	\end{flushleft}
+	
+	% ── Заполняем пространство до низа ──────────────────────────────────────
+	\vfill
+	
+	% ── Bottom block (автор + год) ──────────────────────────────────────────
+	\begin{flushleft}
+		{\small \color{ThemeGridStroke}
+			Автор: Андрей Сергиенко Б-82{\hspace{4cm}} \\
+			Год: 2026{\hspace{2cm}}}
+	\end{flushleft}
+	
+	\vspace{0.8cm}
+}
+
+\title{Block Puzzle: Обучение с подкреплением}
+\subtitle{MaskablePPO · 3 поколения агентов · MLP + SmallCNN}
+\date{2026}
+
+\begin{document}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Постановка задачи}
+	\begin{columns}
+		\column{0.45\textwidth}
+		\centering
+		\includegraphics[width=0.8\textwidth,keepaspectratio]{board_game_demo}
+
+		\column{0.55\textwidth}
+		\vspace{-0.5cm}
+		\begin{itemize}
+			\item Поле 8×8, тройка случайных фигур, заполненные строки/столбцы очищаются
+
+			\item \textbf{Пространство действий:} до $3 \times 8 \times 8 = 192$, часть невалидна
+
+			\item \textbf{Разреженная награда:} линии очищаются редко
+
+			\item \textbf{Планирование:} решения внутри хода зависят друг от друга
+
+			\item \textbf{Стохастика:} следующая тройка фигур случайна
+		\end{itemize}
+	\end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Обучение с подкреплением: формальная постановка}
+  \begin{columns}[t]
+    \begin{column}{0.50\textwidth}
+      \textbf{Марковский процесс принятия решений (MDP)}
+
+      \medskip
+      $\langle \mathcal{S},\, \mathcal{A},\, \mathcal{T},\, R,\, \gamma \rangle$
+
+      \medskip
+      \begin{itemize}
+        \item $s_t \in \mathcal{S}$ — состояние: поле $8{\times}8$ + фигуры
+        \item $a_t \in \mathcal{A}(s_t)$ — \emph{валидное} действие
+        \item $r_t = R(s_t, a_t)$ — мгновенная награда
+        \item $\gamma = 0.99$ — дисконт будущих наград
+      \end{itemize}
+
+      \medskip
+      \textbf{Цель:} максимизировать ожидаемый доход
+      \[
+        G_t = \sum_{k=0}^{\infty} \gamma^k\, r_{t+k}
+      \]
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{Агент и среда}
+
+      \medskip
+      \begin{itemize}
+        \item Агент наблюдает $s_t$, выбирает действие $a_t$
+        \item Среда переходит в $s_{t+1}$ и возвращает $r_t$
+        \item Агент обновляет политику $\pi_\theta$, чтобы максимизировать $G_t$
+        \item Цикл повторяется до конца эпизода
+      \end{itemize}
+
+      \medskip
+      \textbf{Ключевая сложность задачи:}\\
+      награда разреженна — линии очищаются редко,
+      агент должен самостоятельно понять, какие действия к этому ведут.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Обучение с подкреплением: PPO + Action Masking}
+  \begin{columns}[t]
+    \begin{column}{0.50\textwidth}
+      \textbf{Policy Gradient / PPO}
+
+      \medskip
+      Политика $\pi_\theta(a \mid s)$ — нейросеть с весами $\theta$.
+
+      \medskip
+      PPO ограничивает шаг через \emph{clipped surrogate}:
+      \[
+        L^{\text{CLIP}} = \mathbb{E}\!\left[\min\!\left(
+          \rho_t \hat{A}_t,\;
+          \mathrm{clip}(\rho_t, 1{\pm}\varepsilon)\,\hat{A}_t
+        \right)\right]
+      \]
+      $\rho_t = \dfrac{\pi_\theta(a_t|s_t)}{\pi_{\theta_\text{old}}(a_t|s_t)}$,\quad $\varepsilon = 0.2$
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{Action masking}
+
+      \medskip
+      Невалидные действия исключаются явно — не штрафом, а обнулением вероятности:
+      \[
+        \tilde{\pi}_\theta(a \mid s) = \frac{\pi_\theta(a|s)\cdot m(a,s)}
+          {\sum_{a'} \pi_\theta(a'|s)\cdot m(a',s)}
+      \]
+      $m(a,s) \in \{0,1\}$ — маска допустимых ходов
+
+      \medskip
+      Это ускоряет обучение и исключает пустые градиенты от заведомо невозможных ходов.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Алгоритм: MaskablePPO}
+  \begin{itemize}
+    \item \textbf{PPO} (Proximal Policy Optimization) — один из самых надёжных on-policy алгоритмов
+    \item \textbf{MaskablePPO} из sb3-contrib — невалидные действия исключаются из вероятностного распределения явно, не через штраф
+  \end{itemize}
+
+  \bigskip
+  \textbf{Ключевые метрики обучения}
+  \begin{itemize}
+    \item \textbf{explained\_variance (EV):} >0.3 — обучение идёт верно, 1.0 — идеал, <0 — хуже случайного
+    \item \textbf{clip\_fraction:} норма 0.03–0.08; выше — политика меняется слишком резко
+    \item \textbf{entropy\_loss:} слишком низкая — агент «зациклился» на одних действиях
+  \end{itemize}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Гиперпараметры}
+  \begin{center}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \rowcolor{ThemeGridStroke}
+    \color{ThemeCellFilled}Параметр & \color{ThemeCellFilled}Значение & \color{ThemeCellFilled}Описание \\
+    \midrule
+    n\_steps        & 512   & шагов перед обновлением политики \\
+    n\_epochs       & 4     & проходов по собранным данным \\
+    learning\_rate  & 1e-4  & скорость обучения (MLP); 7e-5 для CNN \\
+    n\_envs         & 16    & параллельных сред \\
+    total\_steps    & 5 M   & шагов обучения всего \\
+    batch\_size     & 256   & размер минибатча \\
+    ent\_coef       & 0.005 & коэффициент энтропийного бонуса \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \bigskip
+  \textbf{Hyperparameter sweep:} 7 конфигураций × 100k шагов, оценка на 100 эпизодах. Были найдены оптимальные параметры
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Окружение: Gymnasium + наблюдение}
+  \begin{columns}[t]
+    \begin{column}{0.48\textwidth}
+      \textbf{Gymnasium — стандарт RL-окружений}
+
+      \medskip
+      \begin{itemize}
+        \item Интерфейс: \texttt{reset()} / \texttt{step(action)}
+        \item \texttt{step} возвращает $(s', r, \text{done}, \text{trunc}, \text{info})$
+        \item \texttt{SubprocVecEnv} — 16 сред в параллельных процессах
+        \item \texttt{ActionMasker} (sb3-contrib) — передаёт маску допустимых ходов в MaskablePPO
+      \end{itemize}
+
+      \medskip
+      \textbf{Игра → нейросеть: тензор $(C, 8, 8)$}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Почему тензор, а не вектор?}
+
+      \medskip
+      Плоский вектор теряет пространственную структуру: \\
+      клетка $(3,5)$ и $(3,6)$ оказываются далеко друг от друга в памяти.
+
+      \medskip
+      Тензор $\mathbb{R}^{C \times 8 \times 8}$ сохраняет соседство —
+      свёрточные фильтры CNN видят локальные паттерны (уголки, линии, дыры).
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Инженерия наград}
+  \begin{columns}[t]
+    \begin{column}{0.50\textwidth}
+      \textbf{Компоненты функции награды}
+
+      \bigskip
+      \begin{tabular}{@{}lll@{}}
+        \toprule
+        \rowcolor{ThemeGridStroke}
+        \color{ThemeCellFilled}Компонент & \color{ThemeCellFilled}Значение & \\
+        \midrule
+        place\_piece    & +0.2 \\
+        cell\_potential & +varies \\
+        lines\_cleared  & +1.0×N  \\
+        game\_over      & −1.0 \\
+        round\_complete & +0.5 (Gen 3)\\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{Ключевая идея: cell\_potential}
+
+      \smallskip
+      \[
+      r \mathrel{+}= k \cdot \frac{\sum (row\_fill + col\_fill)}{2}
+      \]
+
+      \bigskip
+      Агент самостоятельно учится ставить фигуры в почти заполненные строки.
+      Каналы 4–5 показывают заполненность,
+      \texttt{cell\_potential} вознаграждает за её использование.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Бейзлайны}
+  \begin{columns}[t]
+    \begin{column}{0.50\textwidth}
+      \textbf{RandomAgent} \\
+	  \medskip
+      Выбирает случайный валидный ход из маски действий.\\
+      \bigskip
+      Lines: 1.79 ± 2.12 \quad Reward: 10.48 ± 11.67 \quad CV = 1.18
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{HeuristicAgent} (Dellacherie, Tetris 2003)\\
+      \medskip
+      На каждом ходу симулирует все валидные размещения,
+      оценивает доску по 7 признакам:
+      очищенные линии, дыры (BFS от границ),
+      почти заполненные линии, компактность, дисперсия заполнения.\\
+      \bigskip
+      Lines: 8.48 ± 7.60 \quad Reward: 45.91 ± 40.10 \quad CV = 0.90
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{SmallCNN: архитектура}
+  NatureCNN (встроенная в SB3) использует stride=4/2 — на поле 8×8 схлопывается в ошибку.
+
+  \bigskip
+  \begin{center}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \rowcolor{ThemeGridStroke}
+    \color{ThemeCellFilled}Слой & \color{ThemeCellFilled}Выход & \color{ThemeCellFilled}Примечание \\
+    \midrule
+    Вход                     & [B, C, 8, 8]  & C каналов \\
+    Conv2d(C→32, 3×3, s=1)   & [B, 32, 8, 8] & stride=1, padding=1 \\
+    Conv2d(32→64, 3×3, s=1)  & [B, 64, 8, 8] & \\
+    Conv2d(64→64, 3×3, s=1)  & [B, 64, 8, 8] & рецептивное поле 7×7 \\
+    Flatten                  & [B, 4096]     & \\
+    Linear(4096→256) + ReLU  & [B, 256]      & размер выводится авто \\
+    MLP actor / critic       & —             & поверх 256-d эмбеддинга \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{SmallCNN: ключевые решения}
+  \begin{itemize}
+    \item \textbf{stride=1, padding=1:} размер 8×8 сохраняется через все свёрточные слои; рецептивное поле 7×7 — почти вся доска
+
+    \item \textbf{BatchNorm убран:} \texttt{eval()} vs \texttt{train()} — разные режимы BN искажают advantage-оценки.
+      Результат с BN: clip\_fraction=0.45, EV=−0.57 (хуже случайного)
+
+    \item \textbf{Авто-размер Linear:} \texttt{flat\_size = cnn(zeros(1,C,8,8)).shape[1]} — инвариантен к количеству каналов и размеру доски
+
+    \item \textbf{Learning rate критичен:}
+      lr=3e-5 → clip\_fraction=0.002 (агент не учится);
+      lr=7e-5 → нормальная сходимость
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{SmallCNN: демонстрация}
+  \begin{center}
+    \href{run:video/CNNAnatomyScene.mp4}{%
+      \includegraphics[width=0.85\textwidth,height=0.75\textheight,keepaspectratio]{cnn_preview}%
+    }
+  \end{center}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Поколение 1: базовая архитектура}
+  Наблюдение: \textbf{(6, 8, 8)} — поле + 3 формы фигур + заполненность строк/столбцов
+
+  \bigskip
+  \begin{itemize}
+    \item \textbf{MLP:} тензор → вектор 384 → actor [256, 256] / critic [512, 512]
+    \item \textbf{CNN:} SmallCNN (256-d эмбеддинг) → те же MLP-головы
+  \end{itemize}
+
+	\begin{tabular}{@{}lrrrrr@{}}
+		\toprule
+		\rowcolor{ThemeGridStroke}
+		\color{ThemeCellFilled}Метрика & \color{ThemeCellFilled}Random & \color{ThemeCellFilled}Heuristic & \color{ThemeCellFilled}MLP Gen 1 & \color{ThemeCellFilled}CNN Gen 1 \\
+		\midrule
+		Lines mean  & 1.79   & 8.48      & \textbf{8.84}  & 7.36 \\
+		Lines std   & 2.12   & 7.60      & 5.90           & \textbf{4.74} \\
+		Lines CV    & 1.18   & 0.90      & \textbf{0.67}  & \textbf{0.64} \\
+		Reward mean & 10.48  & 45.91     & \textbf{48.23} & 39.92 \\
+		Reward std  & 11.67  & 40.10     & 31.45          & \textbf{25.23} \\
+		\bottomrule
+	\end{tabular}
+
+	\bigskip
+	MLP превзошёл эвристику: +4.2\% по lines.
+	Оба нейросетевых агента стабильнее: CV 0.64–0.67 vs 0.90 (−28\%).
+\end{frame}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Поколение 2: Placement Heatmap}
+  Наблюдение: \textbf{(9, 8, 8)} — добавлены каналы 6–8: placement heatmap для каждой фигуры.
+
+  \bigskip
+  Ячейка (y,x) = 1.0, если фигуру можно поставить с верхним левым углом в (y,x).
+  Overhead нулевой — маска action\_mask всё равно считается для MaskablePPO.
+
+  \bigskip
+  Gen 1 → декларативно: «вот форма фигуры» \\
+  Gen 2 → процедурно: «вот куда её можно поставить»
+
+  \bigskip
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    \rowcolor{ThemeGridStroke}
+    \color{ThemeCellFilled}Метрика & \color{ThemeCellFilled}Random & \color{ThemeCellFilled}Heuristic & \color{ThemeCellFilled}MLP Gen 2 & \color{ThemeCellFilled}CNN (lr=7e-5) \\
+    \midrule
+    Lines mean   & 1.79   & 8.48      & \textbf{9.88}   & 8.50 \\
+    Lines CV     & 1.18   & 0.90      & \textbf{0.67}            & \textbf{0.67} \\
+    Reward mean  & 10.48  & 45.91     & \textbf{53.89}  & 46.36 \\
+    Pieces placed & 16.32 & 32.31     & \textbf{35.85}  & 32.68 \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Поколение 3: Топологическое зрение}
+  Наблюдение: \textbf{(14, 8, 8)} — добавлены каналы 9–13.
+
+  \bigskip
+  Проблема Gen 2: агент не различал «30 пустых клеток = живая доска» от
+  «30 пустых клеток = 30 изолированных фрагмента».
+
+  \bigskip
+  \begin{itemize}
+    \item \textbf{Каналы 9–11 — Survivability:}
+      для каждой валидной позиции фигуры i — сколько ходов остаётся у двух других фигур после этого размещения.
+      Нормировано [0,1]. Lookahead внутри раунда.
+
+    \item \textbf{Канал 12 — Largest Blob:}
+      BFS по пустым клеткам. Крупнейшая связная компонента = 1.0, остальные клетки = 0.
+
+    \item \textbf{Канал 13 — Dead Zone:}
+      BFS-компонента мертва, если ни одна из текущих трёх фигур не может её затронуть.
+      Проверяем текущий пул фигур.
+  \end{itemize}
+
+  \bigskip
+  \textbf{round\_complete = +0.5} — явный сигнал «дожить до следующей тройки = хорошо»
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Поколение 3: Transfer Learning для CNN}
+  CNN не обучается с нуля на 14 каналах:
+  Conv1 применяет фильтры ко всем 14 каналам одновременно —
+  шум из topology-каналов портит фильтры базовой геометрии.
+  CNN с нуля: \textbf{4.73 lines} (Gen 2 CNN: 8.50).
+
+  \bigskip
+  \textbf{Решение — Transfer Learning:}
+  \begin{itemize}
+    \item Conv1: (32, 9, 3×3) → (32, 14, 3×3)
+    \item каналы 0–8 = веса из Gen 2; каналы 9–13 = нули
+    \item Conv2, Conv3, Linear, MLP-головы — копируются без изменений
+  \end{itemize}
+
+  \bigskip
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \rowcolor{ThemeGridStroke}
+    \color{ThemeCellFilled}Метрика & \color{ThemeCellFilled}CNN Gen 2 & \color{ThemeCellFilled}CNN Gen 3 (с нуля) & \color{ThemeCellFilled}CNN Gen 3 (TL) \\
+    \midrule
+    Lines mean  & 8.50      & 4.73               & \textbf{8.85} \\
+    Lines std   & 5.72      & 3.79               & \textbf{5.66} \\
+    Reward mean & 46.36     & 26.63              & \textbf{48.23} \\
+    Pieces      & 32.68     & 23.63              & \textbf{33.52} \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Что по итогу видит агент?}
+	\begin{center}
+		\href{run:video/ObsEvolutionScene.mp4}{%
+			\includegraphics[width=0.85\textwidth,height=0.75\textheight,keepaspectratio]{cnn_preview}%
+		}
+	\end{center}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Итоговые результаты MLP}
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    \rowcolor{ThemeGridStroke}
+    \color{ThemeCellFilled}Метрика & \color{ThemeCellFilled}Random & \color{ThemeCellFilled}Heuristic & \color{ThemeCellFilled}MLP Gen 1 & \color{ThemeCellFilled}MLP Gen 2 & \color{ThemeCellFilled}MLP Gen 3 \\
+    \midrule
+    Lines mean    & 1.79   & 8.48      & 8.84      & 9.88      & \textbf{11.21} \\
+    Lines std     & 2.12   & 7.60      & 5.90      & 6.57      & 7.68 \\
+    Lines CV      & 1.18   & 0.90      & 0.67      & 0.67      & 0.68 \\
+    Reward mean   & 10.48  & 45.91     & 48.23     & 53.89     & \textbf{60.76} \\
+    Reward std    & 11.67  & 40.10     & 31.45     & 35.13     & 40.96 \\
+    Pieces placed & 16.32  & 32.31     & 33.43     & 35.85     & \textbf{38.81} \\
+    \bottomrule
+  \end{tabular}
+
+  \bigskip
+  MLP Gen 3 vs Heuristic: \textbf{+32\% по lines cleared}, \textbf{+32\% по reward}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Кривые обучения MLP}
+	\begin{center}
+		\includegraphics[height=0.80\textheight,keepaspectratio]{chart_learning_mlp}
+	\end{center}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Итоговые результаты CNN}
+  \footnotesize
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    \rowcolor{ThemeGridStroke}
+    \color{ThemeCellFilled}Метрика & \color{ThemeCellFilled}Random & \color{ThemeCellFilled}Heuristic & \color{ThemeCellFilled}CNN Gen 1 & \color{ThemeCellFilled}CNN Gen 2 & \color{ThemeCellFilled}CNN Gen 3 TL \\
+    \midrule
+    Lines mean     & 1.79   & 8.48      & 7.36      & 8.50            & \textbf{8.85} \\
+    Lines std      & 2.12   & 7.60      & 4.74      & 5.72               & \textbf{5.66} \\
+    Reward mean    & 10.48  & 45.91     & 39.92     & 46.36             & \textbf{48.23} \\
+    Reward std     & 11.67  & 40.10     & 25.23     & 30.50             & \textbf{30.17} \\
+    Pieces placed  & 16.32  & 32.31     & 29.40     & 32.68             & \textbf{33.52} \\
+    \bottomrule
+  \end{tabular}
+
+  \bigskip
+  \begin{itemize}
+    \item CNN Gen 3 \textbf{с нуля}: катастрофа — 4.73 lines (хуже Gen\,1)
+    \item CNN Gen 3 \textbf{Transfer Learning}: восстанавливает уровень Gen\,2 и чуть превосходит его
+    \item Потолок CNN на 8×8 — уровень эвристики; MLP Gen 3 уходит на \textbf{+32\%}
+  \end{itemize}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Кривые обучения CNN}
+	\begin{center}
+		\includegraphics[height=0.80\textheight,keepaspectratio]{chart_learning_cnn}
+	\end{center}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{MLP vs CNN}
+	\begin{center}
+		\includegraphics[height=0.82\textheight,keepaspectratio]{chart_mlp_vs_cnn}
+	\end{center}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Статистическая значимость}
+  1000 независимых эпизодов · seed=42 · \textbf{MLP Gen 3 vs Heuristic}
+
+  \bigskip
+  \begin{itemize}
+    \item \textbf{Mann-Whitney U: p < 0.001} — превосходство MLP значимо при любом уровне значимости
+    \item \textbf{CLES = 0.634} — агент выигрывает в 63.4\% случайно выбранных пар эпизодов
+    \item \textbf{Cohen's d = +0.348} — умеренный эффект (d > 0.2 считается малым)
+    \item \textbf{Paired test (одинаковые фигуры): win rate 59–61\%} — медианная разница +2 линии и +13 очков
+  \end{itemize}
+
+  \bigskip
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    \rowcolor{ThemeGridStroke}
+    \color{ThemeCellFilled}Агент & \color{ThemeCellFilled}≥1 & \color{ThemeCellFilled}≥5 & \color{ThemeCellFilled}≥10 & \color{ThemeCellFilled}≥15 & \color{ThemeCellFilled}≥20 & \color{ThemeCellFilled}≥30 \\
+    \midrule
+    Random        & 66\% & 12\% & 2\%  & 0\%  & 0\% & 0\% \\
+    Heuristic     & 94\% & 64\% & 33\% & 17\% & 9\% & 3\% \\
+    \textbf{MLP Gen 3} & \textbf{99\%} & \textbf{85\%} & \textbf{49\%} & \textbf{26\%} & \textbf{14\%} & 3\% \\
+    CNN Gen 3 TL  & 99\% & 78\% & 40\% & 15\% & 6\% & 1\% \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Выводы}
+  \begin{itemize}
+    \item \textbf{Нейросеть превзошла вручную оптимизированный алгоритм} без единой строки знаний о правилах игры.
+      Эвристика: 7 признаков + подобранные веса + BFS.
+      Нейросеть: только состояние и награда.
+
+    \item \textbf{Стабильность принципиальна:} CNN Gen 3: CV ≈ 0.64 vs \textasciitilde0.90 у эвристики (−29\%).
+      Эвристика нестабильна по дизайну — жадный одношаговый выбор = лотерея при сложных раскладах.
+
+    \item \textbf{Масштабируемость:} сложность эвристики на доске 16×16 растёт в 16×.
+      Нейросеть: фиксированный граф вычислений — та же задержка.
+
+    \item \textbf{Инференс в 10× быстрее:} Heuristic 77 сек vs MLP 7 сек на 500 эпизодов.
+
+    \item \textbf{Feature engineering в RL работает:}
+      Gen 1→2: +12\% по lines.
+      Gen 2→3: +13\% по lines.
+      Дать агенту готовую информацию эффективнее, чем ждать пока он выведет её сам.
+  \end{itemize}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Почему CNN хуже MLP на 8×8?}
+  \begin{columns}[t]
+    \begin{column}{0.50\textwidth}
+      \textbf{Корень проблемы — слишком маленькое поле}\\
+      \smallskip
+      На поле 8×8 уже три слоя Conv\,3×3 покрывают рецептивное поле 7×7 —
+      \textbf{почти всю доску целиком}. CNN фактически вынуждена делать то же,
+      что и MLP, но с большим числом параметров и overhead'ом свёрток.
+      MLP при этом видит весь вектор сразу, без индуктивного смещения
+      на локальность — и выигрывает именно там, где нужна \emph{глобальная} картина.
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      {\color{ThemeText}\textbf{Что изменится на 16×16?}}
+
+      \medskip
+      \begin{itemize}
+        \item Рецептивное поле 7×7 покрывает лишь 19\% доски — CNN снова имеет смысл
+        \item Пространство действий вырастет до $3 \times 16 \times 16 = 768$
+        \item MLP вектор: $C \times 256 = 3584$ — размерность взрывается линейно
+        \item CNN эмбеддинг остаётся 256-d вне зависимости от размера доски
+        \item Эвристика замедляется в $16\times$, CNN — нет
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}[shrink=8]{Что дальше?}
+  \begin{columns}[t]
+    \begin{column}{0.50\textwidth}
+      {\color{ThemeText}\textbf{Скорость: среда на C + CUDA}}
+
+      \smallskip
+      \begin{itemize}
+        \item \textbf{16 сред на Python — мало и медленно:}
+          GIL, интерпретатор, \texttt{SubprocVecEnv} = 16 процессов с IPC-overhead'ом
+        \item \textbf{Среда на C (CUDA-ядра):} тысячи сред живут прямо
+          в видеопамяти — \texttt{step()} выполняется батчем на GPU без
+          копирования данных между CPU и GPU
+        \item \textbf{IsaacGym / EnvPool} — готовые фреймворки для GPU-сред:
+          10\,000+ параллельных сред вместо 16
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      {\color{ThemeText}\textbf{Архитектура и алгоритмы}}
+
+      \medskip
+      \begin{itemize}
+        \item \textbf{Доска 16×16 / 10×10:} проверить гипотезу о CNN на большом поле
+        \item \textbf{DQN/ Transformer:} попробовать другие архитектуры
+        \item \textbf{Curriculum learning:} начинать с простых раскладов фигур,
+          постепенно усложнять — ускоряет начальную сходимость
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\end{document}

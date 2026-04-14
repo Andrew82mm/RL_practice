@@ -746,422 +746,161 @@ MODEL_PATH = "./models/cnn_2_final.zip"
 
 class CNNAnatomyScene(Scene):
     """
-    Кадр 0: Архитектурная схема SmallCNN с формами тензоров
-    Кадр 1: Рост рецептивного поля 3×3 → 5×5 → 7×7
-    Кадр 2: Исходная доска + обзор трёх активаций
-    Кадр 3: Conv1 — 4 лучших фильтра
-    Кадр 4: Conv3 — 4 лучших фильтра + выделение dead zone
+    Показывает слои SmallCNN (Input → Conv2d × 3 → Flatten → Linear)
+    с описанием каждого слоя. Без примеров свёрток и активаций.
     """
-
-    CELL_BIG   = 0.52
-    CELL_SMALL = 0.42
-    CELL_MINI  = 0.26   # для сетки 4 фильтров
 
     def construct(self):
         self.camera.background_color = BG
 
-        print("[CNNAnatomyScene] Загружаем модель...")
-        try:
-            conv1_acts, conv3_acts = extract_activations(MODEL_PATH, ANATOMY_BOARD)
-            self._model_loaded = True
-        except Exception as e:
-            print(f"  [WARNING] {e}\n  Используем синтетические активации.")
-            conv1_acts = self._synthetic_conv1()
-            conv3_acts = self._synthetic_conv3()
-            self._model_loaded = False
-
-        # Выбираем интересные фильтры
-        row5_mask = np.zeros((8, 8), dtype=np.float32)
-        row5_mask[5, :] = 1.0
-        self._best_conv1 = find_best_filter(conv1_acts, score_mask=row5_mask)
-        self._best_conv3 = find_best_filter(conv3_acts, score_mask=ISOLATED_MASK)
-
-        def norm(a):
-            mn, mx = a.min(), a.max()
-            return (a - mn) / (mx - mn + 1e-8)
-
-        # Нормируем все каналы и отбираем топ-4 по дисперсии
-        self._conv1_all = np.stack([norm(conv1_acts[i]) for i in range(conv1_acts.shape[0])])
-        self._conv3_all = np.stack([norm(conv3_acts[i]) for i in range(conv3_acts.shape[0])])
-
-        top4_conv1 = np.argsort(conv1_acts.var(axis=(1, 2)))[-4:][::-1]
-        top4_conv3 = np.argsort(conv3_acts.var(axis=(1, 2)))[-4:][::-1]
-        self._top4_conv1 = list(top4_conv1)
-        self._top4_conv3 = list(top4_conv3)
-
-        self._conv1_map = norm(conv1_acts[self._best_conv1])
-        self._conv3_map = norm(conv3_acts[self._best_conv3])
-
-        # Анимация
-        self._frame0_architecture()
-        self._frame1_receptive_field()
-        self._frame2_board_overview()
-        self._frame3_conv1_filters()
-        self._frame4_conv3_filters()
-
-    # ── Кадр 0: архитектурная схема ────────────────────────────────
-
-    def _frame0_architecture(self):
         title = Text("SmallCNN — архитектура экстрактора признаков",
-                     font_size=24, color=WHITE, weight=BOLD)
-        title.to_edge(UP, buff=0.25)
+                     font_size=26, color=WHITE, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
         self.play(FadeIn(title), run_time=0.4)
 
-        # Блоки архитектуры: (label, shape, color)
-        blocks_meta = [
-            ("Input",    "(C, 8, 8)",    CELL_FILLED),
-            ("Conv1\n3×3, ×32\n+ReLU",   "(32, 8, 8)",   GREEN_HEAT),
-            ("Conv2\n3×3, ×64\n+ReLU",   "(64, 8, 8)",   GREEN_HEAT),
-            ("Conv3\n3×3, ×64\n+ReLU",   "(64, 8, 8)",   GREEN_HEAT),
-            ("Flatten",  "(4096)",       YELLOW_HIGH),
-            ("Linear\n→ 256\n+ReLU",     "(256)",         ORANGE),
+        # (label, shape, color, description)
+        layers = [
+            (
+                "Input",
+                "(C, 8, 8)",
+                CELL_FILLED,
+                "Входной тензор: доска 8×8, C бинарных каналов.\n"
+                "Канал 0 — занятые клетки, каналы 1–N — где лежат фигуры,\n"
+                "последний канал — текущий падающий блок и его позиция.\n"
+                "Бинарное представление: 1.0 = занято, 0.0 = пусто.",
+            ),
+            (
+                "Conv2d\n3×3 × 32\n+ ReLU",
+                "(32, 8, 8)",
+                GREEN_HEAT,
+                "32 фильтра 3×3, padding=1, stride=1 → spatial размер не меняется.\n"
+                "Каждый фильтр выучивает локальный паттерн: горизонталь, вертикаль,\n"
+                "угол, плотность заполнения. ReLU убивает отрицательные активации.\n"
+                "Рецептивное поле = 3×3 пикселя входной доски.",
+            ),
+            (
+                "Conv2d\n3×3 × 64\n+ ReLU",
+                "(64, 8, 8)",
+                GREEN_HEAT,
+                "64 фильтра 3×3 — комбинирует признаки первого слоя.\n"
+                "Видит сочетания локальных паттернов: «два занятых ряда рядом»,\n"
+                "«угол + горизонталь». Рецептивное поле расширяется до 5×5.\n"
+                "Удвоение каналов позволяет кодировать более сложные структуры.",
+            ),
+            (
+                "Conv2d\n3×3 × 64\n+ ReLU",
+                "(64, 8, 8)",
+                GREEN_HEAT,
+                "Третий свёрточный слой, рецептивное поле = 7×7 —\n"
+                "почти вся доска видна из любой точки.\n"
+                "Фильтры кодируют высокоуровневые концепции: мёртвые зоны,\n"
+                "изолированные полости, плотность заполнения строк и столбцов.",
+            ),
+            (
+                "Flatten",
+                "(4096)",
+                YELLOW_HIGH,
+                "Разворачивает тензор 64 × 8 × 8 = 4096 в одномерный вектор.\n"
+                "Никаких обучаемых параметров — чисто геометрическая операция.\n"
+                "После этого пространственная структура потеряна: полносвязный\n"
+                "слой работает с вектором признаков, а не с картой активаций.",
+            ),
+            (
+                "Linear\n→ 256\n+ ReLU",
+                "(256)",
+                ORANGE,
+                "Полносвязный слой: 4096 × 256 + 256 = 1 049 856 параметров.\n"
+                "Сжимает вектор признаков в компактное представление размером 256.\n"
+                "Выход этого слоя — вход для Policy Head и Value Head агента.\n"
+                "ReLU сохраняет нелинейность перед финальными головами сети.",
+            ),
         ]
 
+        # ── Строим блоки ──────────────────────────────────────────
         blocks = VGroup()
-        shapes = VGroup()
-        for name, shape, color in blocks_meta:
+        shape_labels = VGroup()
+
+        for name, shape, color, _ in layers:
             rect = RoundedRectangle(
-                corner_radius=0.12,
-                width=1.55, height=1.10,
+                corner_radius=0.15,
+                width=1.90, height=1.45,
                 fill_color=color, fill_opacity=0.18,
-                stroke_color=color, stroke_width=2.0,
+                stroke_color=color, stroke_width=2.4,
             )
-            lbl = Text(name, font_size=12, color=color, weight=BOLD)
+            lbl = Text(name, font_size=13, color=color, weight=BOLD)
             lbl.move_to(rect)
-            shape_lbl = Text(shape, font_size=10, color=GREY)
-            shape_lbl.next_to(rect, DOWN, buff=0.08)
+            shape_lbl = Text(shape, font_size=11, color=GREY)
+            shape_lbl.next_to(rect, DOWN, buff=0.09)
             blocks.add(VGroup(rect, lbl))
-            shapes.add(shape_lbl)
+            shape_labels.add(shape_lbl)
 
-        blocks.arrange(RIGHT, buff=0.42)
-        blocks.move_to(ORIGIN + UP * 0.2)
+        blocks.arrange(RIGHT, buff=0.30)
+        blocks.move_to(UP * 1.65)
 
-        # Выравниваем shape-подписи под блоками
-        for i, sh in enumerate(shapes):
-            sh.next_to(blocks[i], DOWN, buff=0.08)
+        for i, sh in enumerate(shape_labels):
+            sh.next_to(blocks[i], DOWN, buff=0.09)
 
-        # Стрелки между блоками
         arrows = VGroup()
         for i in range(len(blocks) - 1):
             arr = Arrow(
                 blocks[i].get_right(), blocks[i + 1].get_left(),
-                buff=0.06, color=GREY, stroke_width=1.8,
+                buff=0.05, color=GREY, stroke_width=1.8,
                 max_tip_length_to_length_ratio=0.25,
             )
             arrows.add(arr)
 
-        # Строим сцену
         self.play(
-            LaggedStart(*[FadeIn(b) for b in blocks], lag_ratio=0.15),
-            run_time=1.2,
-        )
-        self.play(
-            LaggedStart(*[GrowArrow(a) for a in arrows], lag_ratio=0.12),
-            run_time=0.8,
-        )
-        self.play(
-            LaggedStart(*[FadeIn(s) for s in shapes], lag_ratio=0.12),
-            run_time=0.6,
-        )
-
-        # Ключевые факты
-        facts = VGroup(
-            Text("stride=1, padding=1 → spatial размерность 8×8 не меняется",
-                 font_size=12, color=GREY),
-            Text("BatchNorm убран: несовместим с чередованием train/eval в SB3",
-                 font_size=12, color="#e74c3c"),
-            Text("Рецептивное поле Conv3 = 7×7 → почти вся доска из любой точки",
-                 font_size=12, color=YELLOW_HIGH),
-        )
-        facts.arrange(DOWN, buff=0.12, aligned_edge=LEFT)
-        facts.to_edge(DOWN, buff=0.28)
-        self.play(FadeIn(facts), run_time=0.5)
-        self.wait(2.5)
-
-        self.play(FadeOut(VGroup(title, blocks, shapes, arrows, facts)), run_time=0.5)
-
-    # ── Кадр 1: рост рецептивного поля ────────────────────────────
-
-    def _frame1_receptive_field(self):
-        title = Text("Рецептивное поле растёт с каждым слоем",
-                     font_size=24, color=WHITE, weight=BOLD)
-        title.to_edge(UP, buff=0.25)
-        self.play(FadeIn(title), run_time=0.4)
-
-        # Одна и та же доска — три раза, с разным RF-прямоугольником
-        rf_data = [
-            (3, CELL_FILLED,  "Conv1\n3×3",  "Каждая ячейка видит 3×3 входных клетки"),
-            (5, GREEN_HEAT,   "Conv2\n5×5",  "Два слоя → рецептивное поле 5×5"),
-            (7, YELLOW_HIGH,  "Conv3\n7×7",  "Три слоя → рецептивное поле 7×7"),
-        ]
-
-        boards = VGroup()
-        rf_labels = VGroup()
-        for size, color, lbl_text, desc in rf_data:
-            board_grid = make_grid(ANATOMY_BOARD.astype(float), cell=self.CELL_SMALL)
-            boards.add(board_grid)
-            lbl = Text(lbl_text, font_size=14, color=color, weight=BOLD)
-            lbl.next_to(board_grid, UP, buff=0.15)
-            desc_lbl = Text(desc, font_size=11, color=GREY)
-            desc_lbl.next_to(board_grid, DOWN, buff=0.12)
-            rf_labels.add(VGroup(lbl, desc_lbl))
-
-        boards.arrange(RIGHT, buff=0.55)
-        boards.move_to(ORIGIN + DOWN * 0.1)
-
-        for i, board_grid in enumerate(boards):
-            rf_labels[i][0].next_to(board_grid, UP, buff=0.15)
-            rf_labels[i][1].next_to(board_grid, DOWN, buff=0.12)
-
-        self.play(
-            LaggedStart(*[FadeIn(b) for b in boards], lag_ratio=0.3),
-            LaggedStart(*[FadeIn(l) for l in rf_labels], lag_ratio=0.3),
+            LaggedStart(*[FadeIn(b) for b in blocks], lag_ratio=0.12),
             run_time=1.0,
         )
-
-        # Для каждой доски: анимируем прямоугольник рецептивного поля
-        # Фокусируемся на центральной ячейке (3,3)
-        focus_r, focus_c = 3, 3
-        rf_boxes = []
-        for i, (size, color, _, _) in enumerate(rf_data):
-            board_grid = boards[i]
-            cell = self.CELL_SMALL
-            origin = board_grid.get_corner(UL)
-            half = size // 2
-
-            r_start = max(0, focus_r - half)
-            c_start = max(0, focus_c - half)
-            r_end   = min(7, focus_r + half)
-            c_end   = min(7, focus_c + half)
-
-            # Центральная ячейка
-            cx = origin[0] + (focus_c + 0.5) * cell
-            cy = origin[1] - (focus_r + 0.5) * cell
-            center_dot = Dot([cx, cy, 0], radius=0.07, color=color)
-
-            # RF-прямоугольник
-            rect_x = origin[0] + c_start * cell
-            rect_y = origin[1] - r_start * cell
-            rect_w = (c_end - c_start + 1) * cell
-            rect_h = (r_end - r_start + 1) * cell
-
-            rf_rect = Rectangle(
-                width=rect_w, height=rect_h,
-                stroke_color=color, stroke_width=2.5,
-                fill_color=color, fill_opacity=0.12,
-            )
-            rf_rect.move_to([rect_x + rect_w / 2, rect_y - rect_h / 2, 0])
-            rf_boxes.append(VGroup(rf_rect, center_dot))
-
-        for i, box in enumerate(rf_boxes):
-            self.play(FadeIn(box), run_time=0.5)
-            self.wait(0.3)
-
-        self.wait(1.5)
         self.play(
-            FadeOut(VGroup(title, boards, rf_labels, *rf_boxes)),
+            LaggedStart(*[GrowArrow(a) for a in arrows], lag_ratio=0.10),
+            run_time=0.7,
+        )
+        self.play(
+            LaggedStart(*[FadeIn(s) for s in shape_labels], lag_ratio=0.10),
             run_time=0.5,
         )
 
-    # ── Кадр 2: доска + обзор трёх активаций ──────────────────────
-
-    def _frame2_board_overview(self):
-        title = Text("Анатомия SmallCNN — что выучили свёртки",
-                     font_size=24, color=WHITE, weight=BOLD)
-        title.to_edge(UP, buff=0.25)
-        self.play(FadeIn(title), run_time=0.4)
-
-        board_grid = make_grid(ANATOMY_BOARD.astype(float), cell=self.CELL_BIG)
-        board_grid.shift(LEFT * 4.2)
-
-        c1_grid = make_grid(self._conv1_map, cell=self.CELL_SMALL,
-                            color_fn=lambda v: val_to_color(v, "#0d1117", YELLOW_HIGH))
-        c1_grid.move_to(ORIGIN)
-
-        c3_grid = make_grid(self._conv3_map, cell=self.CELL_SMALL,
-                            color_fn=lambda v: val_to_color(v, "#0d1117", RED_DEAD))
-        c3_grid.shift(RIGHT * 4.0)
-
-        bl  = Text("Входная доска\n(channel 0)", font_size=13, color=GREY)
-        bl.next_to(board_grid, DOWN, buff=0.15)
-        c1l = Text(f"Conv1 — фильтр #{self._best_conv1}\n(после ReLU)",
-                   font_size=13, color=YELLOW_HIGH)
-        c1l.next_to(c1_grid, DOWN, buff=0.15)
-        c3l = Text(f"Conv3 — фильтр #{self._best_conv3}\n(рецептивное поле 7×7)",
-                   font_size=13, color=RED_DEAD)
-        c3l.next_to(c3_grid, DOWN, buff=0.15)
-
-        a1 = Arrow(board_grid.get_right(), c1_grid.get_left(), buff=0.1,
-                   color=GREY, stroke_width=2, max_tip_length_to_length_ratio=0.2)
-        a1l = Text("3×3 × 32", font_size=10, color=GREY).next_to(a1, UP, buff=0.07)
-
-        a2 = Arrow(c1_grid.get_right(), c3_grid.get_left(), buff=0.1,
-                   color=GREY, stroke_width=2, max_tip_length_to_length_ratio=0.2)
-        a2l = Text("3×3 × 64\n(×2)", font_size=10, color=GREY).next_to(a2, UP, buff=0.07)
-
-        self.play(
-            LaggedStart(
-                FadeIn(board_grid), FadeIn(bl),
-                GrowArrow(a1), FadeIn(a1l),
-                FadeIn(c1_grid), FadeIn(c1l),
-                GrowArrow(a2), FadeIn(a2l),
-                FadeIn(c3_grid), FadeIn(c3l),
-                lag_ratio=0.25,
-            ),
-            run_time=2.0,
+        # ── Описания появляются по очереди ────────────────────────
+        desc_box = RoundedRectangle(
+            corner_radius=0.15,
+            width=12.5, height=2.80,
+            fill_color="#12122a", fill_opacity=0.95,
+            stroke_color=GREY, stroke_width=1.3,
         )
-        self.wait(1.2)
+        desc_box.to_edge(DOWN, buff=0.15)
 
-        self._all_frame2 = VGroup(
-            title, board_grid, bl, c1_grid, c1l, c3_grid, c3l, a1, a1l, a2, a2l,
-        )
-        self.play(FadeOut(self._all_frame2), run_time=0.5)
+        self.play(FadeIn(desc_box), run_time=0.3)
 
-    # ── Кадр 3: 4 фильтра Conv1 ────────────────────────────────────
+        SCALE_UP = 1.22
+        prev_desc = None
+        prev_block_idx = None
 
-    def _frame3_conv1_filters(self):
-        title = Text(f"Conv1 — топ-4 фильтра из 32  (первый слой)",
-                     font_size=22, color=YELLOW_HIGH, weight=BOLD)
-        title.to_edge(UP, buff=0.25)
-        self.play(FadeIn(title), run_time=0.4)
+        for i, (_, _, color, desc_text) in enumerate(layers):
+            desc = Text(desc_text, font_size=18, color=WHITE, line_spacing=1.4)
+            desc.move_to(desc_box)
 
-        board_grid = make_grid(ANATOMY_BOARD.astype(float), cell=self.CELL_BIG)
-        board_grid.shift(LEFT * 4.5)
-        board_lbl = Text("Вход\n(ch 0)", font_size=13, color=GREY)
-        board_lbl.next_to(board_grid, DOWN, buff=0.12)
+            anims = [FadeIn(desc)]
 
-        # Сетка 2×2 фильтров
-        filter_grid = self._make_filter_grid(
-            self._conv1_all, self._top4_conv1, YELLOW_HIGH,
-            highlight_idx=self._best_conv1,
-        )
-        filter_grid.move_to(RIGHT * 2.0)
+            # Увеличиваем текущий блок + shape label
+            anims += [
+                blocks[i].animate.scale(SCALE_UP),
+                shape_labels[i].animate.scale(SCALE_UP),
+            ]
+            # Возвращаем предыдущий
+            if prev_block_idx is not None:
+                anims += [
+                    blocks[prev_block_idx].animate.scale(1 / SCALE_UP),
+                    shape_labels[prev_block_idx].animate.scale(1 / SCALE_UP),
+                ]
+            if prev_desc:
+                anims += [FadeOut(prev_desc)]
 
-        arr = Arrow(board_grid.get_right(), filter_grid.get_left(),
-                    buff=0.15, color=GREY, stroke_width=2.5,
-                    max_tip_length_to_length_ratio=0.2)
-        arr_lbl = Text("Conv2d\n3×3, pad=1\nReLU", font_size=12, color=GREY)
-        arr_lbl.next_to(arr, UP, buff=0.1)
+            self.play(*anims, run_time=0.5)
+            self.wait(7.0)
 
-        self.play(FadeIn(board_grid), FadeIn(board_lbl), run_time=0.4)
-        self.play(GrowArrow(arr), FadeIn(arr_lbl), run_time=0.4)
-        self.play(FadeIn(filter_grid), run_time=0.6)
+            prev_desc = desc
+            prev_block_idx = i
 
-        # Аннотация лучшего фильтра
-        # Подсвечиваем строку 5 в лучшем фильтре (первый в топ-4)
-        note = Text(
-            "Первый слой ловит простые паттерны:\n"
-            "горизонтальные и вертикальные границы,\n"
-            "плотность заполнения строк и столбцов.",
-            font_size=13, color=GREY, line_spacing=1.3,
-        )
-        note.to_edge(DOWN, buff=0.28)
-        self.play(FadeIn(note), run_time=0.4)
-        self.wait(2.5)
-
-        self.play(FadeOut(VGroup(title, board_grid, board_lbl, arr, arr_lbl,
-                                  filter_grid, note)), run_time=0.5)
-
-    # ── Кадр 4: 4 фильтра Conv3 + dead zone ───────────────────────
-
-    def _frame4_conv3_filters(self):
-        title = Text(f"Conv3 — топ-4 фильтра из 64  (рецептивное поле 7×7)",
-                     font_size=22, color=RED_DEAD, weight=BOLD)
-        title.to_edge(UP, buff=0.25)
-        self.play(FadeIn(title), run_time=0.4)
-
-        board_grid = make_grid(ANATOMY_BOARD.astype(float), cell=self.CELL_BIG)
-        board_grid.shift(LEFT * 4.5)
-        board_lbl = Text("Вход\n(ch 0)", font_size=13, color=GREY)
-        board_lbl.next_to(board_grid, DOWN, buff=0.12)
-
-        filter_grid = self._make_filter_grid(
-            self._conv3_all, self._top4_conv3, RED_DEAD,
-            highlight_idx=self._best_conv3,
-        )
-        filter_grid.move_to(RIGHT * 2.0)
-
-        arr = Arrow(board_grid.get_right(), filter_grid.get_left(),
-                    buff=0.15, color=GREY, stroke_width=2.5,
-                    max_tip_length_to_length_ratio=0.2)
-
-        self.play(FadeIn(board_grid), FadeIn(board_lbl), run_time=0.4)
-        self.play(GrowArrow(arr), run_time=0.3)
-        self.play(FadeIn(filter_grid), run_time=0.6)
-
-        # Выделяем изолированную зону на доске
-        iso_board = [board_grid[r * 8 + c] for r in range(2, 4) for c in range(3, 5)]
-        box_board = SurroundingRectangle(
-            VGroup(*iso_board), color=RED_DEAD, stroke_width=2.5, buff=0.03,
-        )
-        self.play(Create(box_board), run_time=0.5)
-
-        if self._model_loaded:
-            story = (
-                "Мы не давали Gen 1 понятия «мёртвая зона».\n"
-                "Но Conv3 своими весами научился выделять\n"
-                "изолированные пустоты — через рецептивное поле 7×7.\n\n"
-                "Нейросеть сама вывела эвристику, которую\n"
-                "мы позже закодили вручную в Gen 3."
-            )
-        else:
-            story = (
-                "При рецептивном поле 7×7 третий слой\n"
-                "видит почти всю доску из любой позиции.\n\n"
-                "Фильтры кодируют топологические свойства:\n"
-                "связность, изолированность пустых областей."
-            )
-
-        annot = Text(story, font_size=12, color=GREY, line_spacing=1.3)
-        annot.to_edge(DOWN, buff=0.22)
-        self.play(FadeIn(annot), run_time=0.5)
-        self.wait(3.5)
-
-    # ── Вспомогательные методы ─────────────────────────────────────
-
-    def _make_filter_grid(
-        self,
-        all_acts: np.ndarray,
-        top4_indices: list[int],
-        color: str,
-        highlight_idx: int,
-    ) -> VGroup:
-        """
-        Сетка 2×2 из четырёх фильтров. Фильтр highlight_idx обведён рамкой.
-        """
-        panels = []
-        for rank, idx in enumerate(top4_indices):
-            act = all_acts[idx]
-            cfn = lambda v, c=color: val_to_color(v, "#0d1117", c)
-            grid = make_grid(act, cell=self.CELL_MINI, color_fn=cfn)
-            lbl = Text(f"#{idx}", font_size=10,
-                       color=WHITE if idx != highlight_idx else color,
-                       weight=BOLD if idx == highlight_idx else NORMAL)
-            lbl.next_to(grid, DOWN, buff=0.06)
-            panel = VGroup(grid, lbl)
-            if idx == highlight_idx:
-                box = SurroundingRectangle(grid, color=color, stroke_width=2.0, buff=0.04)
-                panel.add(box)
-            panels.append(panel)
-
-        row1 = VGroup(panels[0], panels[1])
-        row2 = VGroup(panels[2], panels[3])
-        row1.arrange(RIGHT, buff=0.22)
-        row2.arrange(RIGHT, buff=0.22)
-        grid_grp = VGroup(row1, row2)
-        grid_grp.arrange(DOWN, buff=0.28)
-        return grid_grp
-
-    def _synthetic_conv1(self) -> np.ndarray:
-        acts = np.random.rand(32, 8, 8).astype(np.float32) * 0.15
-        acts[7, 5, :] = np.random.uniform(0.7, 0.95, 8)
-        acts[7, 4, :] = np.random.uniform(0.4, 0.6, 8)
-        acts[7, 6, :] = np.random.uniform(0.3, 0.5, 8)
-        return acts
-
-    def _synthetic_conv3(self) -> np.ndarray:
-        acts = np.random.rand(64, 8, 8).astype(np.float32) * 0.12
-        acts[15, 2:4, 3:5] = np.random.uniform(0.75, 0.95, (2, 2))
-        acts[15, 3, 3] = 0.92
-        acts[15, 2, 4] = 0.88
-        return acts
+        self.wait(1.0)
