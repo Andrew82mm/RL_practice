@@ -209,9 +209,8 @@
       \end{itemize}
 
       \medskip
-      \textbf{Ключевая сложность задачи:}\\
-      награда разреженна — линии очищаются редко,
-      агент должен самостоятельно понять, какие действия к этому ведут.
+      \textbf{Ключевая сложность:}\\
+      агент должен самостоятельно понять, какие действия ведут к увеличению награды
     \end{column}
   \end{columns}
 \end{frame}
@@ -233,7 +232,9 @@
           \mathrm{clip}(\rho_t, 1{\pm}\varepsilon)\,\hat{A}_t
         \right)\right]
       \]
-      $\rho_t = \dfrac{\pi_\theta(a_t|s_t)}{\pi_{\theta_\text{old}}(a_t|s_t)}$,\quad $\varepsilon = 0.2$
+      $\rho_t = \dfrac{\pi_\theta(a_t|s_t)}{\pi_{\theta_\text{old}}(a_t|s_t)}$,\quad $\varepsilon = 0.2$\\
+      \medskip
+      Return: $G_t = \sum_{k=0}^{\infty} \gamma^k r_{t+k}$
     \end{column}
     \begin{column}{0.46\textwidth}
       \textbf{Action masking}
