@@ -162,67 +162,36 @@ class BlockPuzzleEnv(gym.Env):
 
                 obs[9 + i] = surv * placement_map / norm
 
-        # Канал 12: бинарная маска крупнейшей связной компоненты пустых клеток.
-        # "Территория" — куда стремиться ставить фигуры.
-        obs[12] = self._largest_empty_blob()
-
-        # Канал 13: маска мёртвых зон — пустых областей куда не влезет
-        # ни одна фигура из полного пула. Гарантированный балласт.
-        obs[13] = self._dead_zone_mask()
+        # Каналы 12-13: крупнейший blob и мёртвые зоны — одним BFS проходом
+        obs[12], obs[13] = self._compute_blob_and_dead_zone()
 
         return obs
 
-    def _largest_empty_blob(self) -> np.ndarray:
-        """BFS: находит крупнейшую связную компоненту пустых клеток, возвращает её бинарную маску."""
+    def _compute_blob_and_dead_zone(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Единственный BFS по пустым клеткам, вычисляет оба канала за один проход:
+          - blob_ch (12): маска крупнейшей связной компоненты пустых клеток
+          - dead_ch (13): маска компонент, куда не влезет ни одна текущая фигура
+
+        Оптимизация: valid_pos для каждой фигуры вычисляется ОДИН РАЗ до BFS
+        (в старом коде — заново для каждой компоненты × каждой фигуры).
+        """
         n = self.board_size
         empty = (self.board.grid == 0)
         visited = np.zeros((n, n), dtype=bool)
-        best: list[tuple[int, int]] = []
 
-        for sy in range(n):
-            for sx in range(n):
-                if not empty[sy, sx] or visited[sy, sx]:
-                    continue
-                component: list[tuple[int, int]] = []
-                q: deque[tuple[int, int]] = deque()
-                q.append((sy, sx))
-                visited[sy, sx] = True
-                while q:
-                    cy, cx = q.popleft()
-                    component.append((cy, cx))
-                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                        ny, nx = cy + dy, cx + dx
-                        if 0 <= ny < n and 0 <= nx < n and empty[ny, nx] and not visited[ny, nx]:
-                            visited[ny, nx] = True
-                            q.append((ny, nx))
-                if len(component) > len(best):
-                    best = component
-
-        channel = np.zeros((n, n), dtype=np.float32)
-        for y, x in best:
-            channel[y, x] = 1.0
-        return channel
-
-    def _dead_zone_mask(self) -> np.ndarray:
-        """
-        BFS по пустым клеткам. Для каждой связной компоненты проверяет:
-        может ли хоть одна из ТЕКУЩИХ фигур быть размещена так,
-        чтобы затронуть эту компоненту. Если нет — компонента мёртвая для этого раунда.
-
-        Намеренно проверяем текущие фигуры, а не полный пул: в пуле есть 1×1 фигура,
-        которая влезает в любую клетку → полный пул даёт всегда 0. Текущие фигуры
-        дают динамичный и полезный сигнал: "куда не влезет ни одна из ваших трёх фигур".
-        """
-        if not self.current_pieces:
-            return np.zeros((self.board_size, self.board_size), dtype=np.float32)
-
-        n = self.board_size
-        empty = (self.board.grid == 0)
-        visited = np.zeros((n, n), dtype=bool)
-        channel = np.zeros((n, n), dtype=np.float32)
         grid_f = self.board.grid.astype(np.float32)
         current_piece_mats = [self.piece_pool[idx].astype(np.float32) for idx in self.current_pieces]
 
+        # Позиции где каждая фигура влезает на текущую доску — не зависит от компоненты
+        valid_pos_per_piece = [
+            (correlate2d(grid_f, piece, mode='valid') == 0)
+            for piece in current_piece_mats
+        ]
+
+        best_component: list[tuple[int, int]] = []
+        dead_cells: list[tuple[int, int]] = []
+
         for sy in range(n):
             for sx in range(n):
                 if not empty[sy, sx] or visited[sy, sx]:
@@ -240,25 +209,33 @@ class BlockPuzzleEnv(gym.Env):
                             visited[ny, nx] = True
                             q.append((ny, nx))
 
-                comp_mask = np.zeros((n, n), dtype=np.float32)
-                for y, x in component:
-                    comp_mask[y, x] = 1.0
+                if len(component) > len(best_component):
+                    best_component = component
 
-                is_dead = True
-                for piece in current_piece_mats:
-                    # valid_pos[y,x]=True → фигура влезает на доску без перекрытия
-                    valid_pos = (correlate2d(grid_f, piece, mode='valid') == 0)
-                    # touches[y,x]=True → фигура задевает хотя бы одну клетку компоненты
-                    touches = (correlate2d(comp_mask, piece, mode='valid') > 0)
-                    if np.any(valid_pos & touches):
-                        is_dead = False
-                        break
-
-                if is_dead:
+                if current_piece_mats:
+                    comp_mask = np.zeros((n, n), dtype=np.float32)
                     for y, x in component:
-                        channel[y, x] = 1.0
+                        comp_mask[y, x] = 1.0
 
-        return channel
+                    is_dead = True
+                    for piece, valid_pos in zip(current_piece_mats, valid_pos_per_piece):
+                        touches = (correlate2d(comp_mask, piece, mode='valid') > 0)
+                        if np.any(valid_pos & touches):
+                            is_dead = False
+                            break
+
+                    if is_dead:
+                        dead_cells.extend(component)
+
+        blob_ch = np.zeros((n, n), dtype=np.float32)
+        for y, x in best_component:
+            blob_ch[y, x] = 1.0
+
+        dead_ch = np.zeros((n, n), dtype=np.float32)
+        for y, x in dead_cells:
+            dead_ch[y, x] = 1.0
+
+        return blob_ch, dead_ch
 
     def _pieces_matrices(self) -> list[np.ndarray]:
         return [self.piece_pool[i] for i in self.current_pieces]
