@@ -3,7 +3,7 @@ from gymnasium import spaces
 import numpy as np
 from collections import deque
 
-from scipy.signal import correlate2d
+from scipy.signal import correlate2d, fftconvolve
 
 from .logic import Board
 from .pieces import PIECE_POOL
@@ -125,36 +125,42 @@ class BlockPuzzleEnv(gym.Env):
         #   Один C-вызов вместо (n-ph+1)*(n-pw+1) Python-итераций.
         num_pieces = len(self.current_pieces)
         if num_pieces > 1:
-            # Конвертируем доску один раз — copy() внутри цикла будет float32→float32
             board_f32 = self.board.grid.astype(np.float32)
 
             for i in range(num_pieces):
                 placement_map = obs[6 + i]
                 remaining = [j for j in range(num_pieces) if j != i]
-                surv = np.zeros((n, n), dtype=np.float32)
-
-                piece_i = self.piece_pool[self.current_pieces[i]].astype(np.float32)
-                hi, wi = piece_i.shape
-
-                # Конвертируем оставшиеся фигуры один раз вне (y,x) цикла
                 pieces_j = [
                     self.piece_pool[self.current_pieces[j]].astype(np.float32)
                     for j in remaining
                 ]
                 norm = float(len(remaining) * n * n)
 
-                # Итерируем только по валидным позициям, пропуская нули
-                for y, x in np.argwhere(placement_map > 0):
-                    temp = board_f32.copy()
-                    temp[y:y + hi, x:x + wi] += piece_i
+                piece_i = self.piece_pool[self.current_pieces[i]].astype(np.float32)
+                hi, wi = piece_i.shape
+                surv = np.zeros((n, n), dtype=np.float32)
 
-                    total_valid = sum(
-                        int((correlate2d(temp, pj, mode='valid') == 0).sum())
-                        for pj in pieces_j
-                    )
-                    surv[y, x] = total_valid / norm
+                for pj in pieces_j:
+                    hj, wj = pj.shape
 
-                obs[9 + i] = surv
+                    # A_j[ry,rx] = 1 если piece_j влезает в (ry,rx) на текущей доске
+                    A_j = (correlate2d(board_f32, pj, mode='valid') == 0).astype(np.float32)
+
+                    # cross[k,l] = количество перекрывающихся клеток когда piece_j смещена
+                    # на (k-(hj-1), l-(wj-1)) относительно piece_i.
+                    # Позиции вне этого диапазона — не пересекаются → конфликта нет (B=1).
+                    cross = correlate2d(piece_i, pj, mode='full')  # shape (hi+hj-1, wi+wj-1)
+                    B_ext = np.ones((2 * n - 1, 2 * n - 1), dtype=np.float32)
+                    dy0, dx0 = n - hj, n - wj
+                    B_ext[dy0:dy0 + hi + hj - 1, dx0:dx0 + wi + wj - 1] = (cross == 0).astype(np.float32)
+
+                    # fftconvolve(A_j, B_ext)[y+(n-1), x+(n-1)]
+                    # = Σ_{ry,rx} A_j[ry,rx] * B_ext[y-ry+(n-1), x-rx+(n-1)]
+                    # = количество позиций piece_j, валидных после размещения piece_i в (y,x)
+                    conv = fftconvolve(A_j, B_ext)
+                    surv[:n - hi + 1, :n - wi + 1] += conv[n - 1:2 * n - hi, n - 1:2 * n - wi]
+
+                obs[9 + i] = surv * placement_map / norm
 
         # Канал 12: бинарная маска крупнейшей связной компоненты пустых клеток.
         # "Территория" — куда стремиться ставить фигуры.
@@ -214,15 +220,13 @@ class BlockPuzzleEnv(gym.Env):
         empty = (self.board.grid == 0)
         visited = np.zeros((n, n), dtype=bool)
         channel = np.zeros((n, n), dtype=np.float32)
-
-        # Уникальные фигуры из текущей тройки (без дублей)
-        current_piece_mats = [self.piece_pool[idx] for idx in self.current_pieces]
+        grid_f = self.board.grid.astype(np.float32)
+        current_piece_mats = [self.piece_pool[idx].astype(np.float32) for idx in self.current_pieces]
 
         for sy in range(n):
             for sx in range(n):
                 if not empty[sy, sx] or visited[sy, sx]:
                     continue
-                # BFS — находим компоненту
                 component: list[tuple[int, int]] = []
                 q: deque[tuple[int, int]] = deque()
                 q.append((sy, sx))
@@ -236,29 +240,19 @@ class BlockPuzzleEnv(gym.Env):
                             visited[ny, nx] = True
                             q.append((ny, nx))
 
-                comp_set = set(component)
-                is_dead = True
+                comp_mask = np.zeros((n, n), dtype=np.float32)
+                for y, x in component:
+                    comp_mask[y, x] = 1.0
 
-                # Проверяем каждую из текущих фигур
+                is_dead = True
                 for piece in current_piece_mats:
-                    if not is_dead:
+                    # valid_pos[y,x]=True → фигура влезает на доску без перекрытия
+                    valid_pos = (correlate2d(grid_f, piece, mode='valid') == 0)
+                    # touches[y,x]=True → фигура задевает хотя бы одну клетку компоненты
+                    touches = (correlate2d(comp_mask, piece, mode='valid') > 0)
+                    if np.any(valid_pos & touches):
+                        is_dead = False
                         break
-                    ph, pw = piece.shape
-                    for py in range(n - ph + 1):
-                        if not is_dead:
-                            break
-                        for px in range(n - pw + 1):
-                            if not self.board.can_place(piece, px, py):
-                                continue
-                            for dr in range(ph):
-                                for dc in range(pw):
-                                    if piece[dr, dc] and (py + dr, px + dc) in comp_set:
-                                        is_dead = False
-                                        break
-                                if not is_dead:
-                                    break
-                            if not is_dead:
-                                break
 
                 if is_dead:
                     for y, x in component:

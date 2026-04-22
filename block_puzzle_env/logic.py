@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.signal import correlate2d
 
 class Board:
     def __init__(self, size=8):
@@ -63,11 +64,15 @@ class Board:
         Размер маски: 3 * board_size * board_size.
         """
         mask = np.zeros(3 * board_size * board_size, dtype=bool)
+        grid_f = self.grid.astype(np.float32)
         for slot, pool_idx in enumerate(current_piece_indices):
-            piece = piece_pool[pool_idx]
-            for y in range(board_size):
-                for x in range(board_size):
-                    if self.can_place(piece, x, y):
-                        action_id = slot * board_size * board_size + y * board_size + x
-                        mask[action_id] = True
+            piece = piece_pool[pool_idx].astype(np.float32)
+            h, w = piece.shape
+            # correlate2d(grid, piece) == 0 означает отсутствие перекрытия → можно поставить
+            # mode='valid' даёт shape (n-h+1, n-w+1) — только позиции в пределах доски
+            valid = (correlate2d(grid_f, piece, mode='valid') == 0)
+            result = np.zeros((board_size, board_size), dtype=bool)
+            result[:board_size - h + 1, :board_size - w + 1] = valid
+            offset = slot * board_size * board_size
+            mask[offset:offset + board_size * board_size] = result.ravel()
         return mask
