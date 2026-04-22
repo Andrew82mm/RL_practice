@@ -4,6 +4,10 @@ __pycache__/
 *.pyo
 *.so
 
+# ── Cython: сгенерированный C-код и артефакты сборки ─────────────────────────
+block_puzzle_env/_fast.c
+build/
+
 # ── Virtual environments ──────────────────────────────────────────────────────
 .venv/
 venv/

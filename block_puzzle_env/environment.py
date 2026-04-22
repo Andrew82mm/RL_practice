@@ -3,11 +3,18 @@ from gymnasium import spaces
 import numpy as np
 from collections import deque
 
-from scipy.signal import correlate2d, fftconvolve
+from scipy.signal import correlate2d
+from scipy.fft import next_fast_len, rfft2, irfft2
 
 from .logic import Board
 from .pieces import PIECE_POOL
 from config import REWARD, ENV
+
+try:
+    from block_puzzle_env._fast import compute_blob_and_dead_zone as _fast_bnd
+    _FAST_BFS = True
+except ImportError:
+    _FAST_BFS = False
 
 
 class BlockPuzzleEnv(gym.Env):
@@ -80,6 +87,10 @@ class BlockPuzzleEnv(gym.Env):
         self._ep_perfect_clears = 0
         self._ep_pieces_placed = 0
 
+        # Кэш FFT(B_ext) для survivability: ключ (i_pool_idx, j_pool_idx).
+        # B_ext зависит только от пары фигур, не от состояния доски — вычисляется один раз.
+        self._surv_fft_cache: dict = {}
+
     # ------------------------------------------------------------------
     # Внутренние методы
     # ------------------------------------------------------------------
@@ -111,84 +122,93 @@ class BlockPuzzleEnv(gym.Env):
             slot_mask = mask[i * n * n : (i + 1) * n * n]
             obs[6 + i] = slot_mask.reshape(n, n).astype(np.float32)
 
-        # Каналы 9-11: survivability heatmap
-        # Для каждой валидной позиции фигуры i:
-        #   cell(y,x) = суммарное число валидных ходов для ОСТАЛЬНЫХ фигур
-        #               после размещения фигуры i в (x,y), нормировано на [0,1].
-        # Даёт агенту lookahead: "если поставлю сюда — сколько ходов останется другим".
+        # Каналы 9-11: survivability heatmap + каналы 12-13: blob / dead-zone.
         #
-        # Реализация через scipy.signal.correlate2d:
-        #   correlate2d(temp, piece_j, mode='valid')[ry, rx]
-        #       = sum(temp[ry:ry+ph, rx:rx+pw] * piece_j)
-        #   > 0 означает overlap → нельзя поставить; == 0 → можно.
-        #   mode='valid' возвращает только позиции где фигура полностью в пределах доски.
-        #   Один C-вызов вместо (n-ph+1)*(n-pw+1) Python-итераций.
+        # Оптимизации:
+        #   1. A_list[k] = valid_pos для piece k вычисляется ОДИН РАЗ и переиспользуется
+        #      в survivability (было: 2×num_pieces вызовов) и в _compute_blob_and_dead_zone
+        #      (было: ещё num_pieces вызовов). Итого: num_pieces вызовов вместо 3×num_pieces.
+        #   2. FFT(B_ext) кэшируется по (i_pool_idx, j_pool_idx): B_ext зависит только от
+        #      пары фигур, не от доски. Ручной rfft2(A)×cached_B→irfft2 вместо fftconvolve.
         num_pieces = len(self.current_pieces)
-        if num_pieces > 1:
-            board_f32 = self.board.grid.astype(np.float32)
+        board_f32 = self.board.grid.astype(np.float32)
+        current_piece_mats = [self.piece_pool[idx].astype(np.float32) for idx in self.current_pieces]
 
+        # A_list[k]: где фигура k влезает на текущую доску — shape (n-hk+1, n-wk+1), float32
+        A_list = [
+            (correlate2d(board_f32, piece, mode='valid') == 0).astype(np.float32)
+            for piece in current_piece_mats
+        ]
+
+        if num_pieces > 1:
             for i in range(num_pieces):
                 placement_map = obs[6 + i]
-                remaining = [j for j in range(num_pieces) if j != i]
-                pieces_j = [
-                    self.piece_pool[self.current_pieces[j]].astype(np.float32)
-                    for j in remaining
-                ]
-                norm = float(len(remaining) * n * n)
-
-                piece_i = self.piece_pool[self.current_pieces[i]].astype(np.float32)
+                piece_i = current_piece_mats[i]
                 hi, wi = piece_i.shape
+                i_pool = self.current_pieces[i]
+                norm = float((num_pieces - 1) * n * n)
                 surv = np.zeros((n, n), dtype=np.float32)
 
-                for pj in pieces_j:
+                for j in range(num_pieces):
+                    if j == i:
+                        continue
+                    j_pool = self.current_pieces[j]
+                    pj = current_piece_mats[j]
                     hj, wj = pj.shape
+                    A_j = A_list[j]  # переиспользуем, не вычисляем заново
 
-                    # A_j[ry,rx] = 1 если piece_j влезает в (ry,rx) на текущей доске
-                    A_j = (correlate2d(board_f32, pj, mode='valid') == 0).astype(np.float32)
+                    cache_key = (i_pool, j_pool)
+                    if cache_key not in self._surv_fft_cache:
+                        cross = correlate2d(piece_i, pj, mode='full')
+                        B_ext = np.ones((2 * n - 1, 2 * n - 1), dtype=np.float32)
+                        dy0, dx0 = n - hj, n - wj
+                        B_ext[dy0:dy0+hi+hj-1, dx0:dx0+wi+wj-1] = (cross == 0).astype(np.float32)
+                        out_h = A_j.shape[0] + B_ext.shape[0] - 1
+                        out_w = A_j.shape[1] + B_ext.shape[1] - 1
+                        fft_shape = (next_fast_len(out_h), next_fast_len(out_w))
+                        self._surv_fft_cache[cache_key] = (rfft2(B_ext, fft_shape), fft_shape, out_h, out_w)
 
-                    # cross[k,l] = количество перекрывающихся клеток когда piece_j смещена
-                    # на (k-(hj-1), l-(wj-1)) относительно piece_i.
-                    # Позиции вне этого диапазона — не пересекаются → конфликта нет (B=1).
-                    cross = correlate2d(piece_i, pj, mode='full')  # shape (hi+hj-1, wi+wj-1)
-                    B_ext = np.ones((2 * n - 1, 2 * n - 1), dtype=np.float32)
-                    dy0, dx0 = n - hj, n - wj
-                    B_ext[dy0:dy0 + hi + hj - 1, dx0:dx0 + wi + wj - 1] = (cross == 0).astype(np.float32)
-
-                    # fftconvolve(A_j, B_ext)[y+(n-1), x+(n-1)]
-                    # = Σ_{ry,rx} A_j[ry,rx] * B_ext[y-ry+(n-1), x-rx+(n-1)]
-                    # = количество позиций piece_j, валидных после размещения piece_i в (y,x)
-                    conv = fftconvolve(A_j, B_ext)
+                    fft_B, fft_shape, out_h, out_w = self._surv_fft_cache[cache_key]
+                    conv = irfft2(rfft2(A_j, fft_shape) * fft_B, fft_shape)[:out_h, :out_w]
                     surv[:n - hi + 1, :n - wi + 1] += conv[n - 1:2 * n - hi, n - 1:2 * n - wi]
 
                 obs[9 + i] = surv * placement_map / norm
 
-        # Каналы 12-13: крупнейший blob и мёртвые зоны — одним BFS проходом
-        obs[12], obs[13] = self._compute_blob_and_dead_zone()
+        # Каналы 12-13: blob и dead-zone — передаём уже вычисленные A_list и piece_mats
+        obs[12], obs[13] = self._compute_blob_and_dead_zone(A_list, current_piece_mats)
 
         return obs
 
-    def _compute_blob_and_dead_zone(self) -> tuple[np.ndarray, np.ndarray]:
+    def _compute_blob_and_dead_zone(
+        self,
+        A_list: list,
+        current_piece_mats: list,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Единственный BFS по пустым клеткам, вычисляет оба канала за один проход:
-          - blob_ch (12): маска крупнейшей связной компоненты пустых клеток
-          - dead_ch (13): маска компонент, куда не влезет ни одна текущая фигура
+        Единственный BFS по пустым клеткам, вычисляет оба канала за один проход.
+        Если скомпилирован _fast.pyx — делегирует в C (Cython).
+        Python-путь оставлен как запасной на случай если .so не собран.
 
-        Оптимизация: valid_pos для каждой фигуры вычисляется ОДИН РАЗ до BFS
-        (в старом коде — заново для каждой компоненты × каждой фигуры).
+        A_list и current_piece_mats передаются из _get_obs — там они уже вычислены
+        для survivability, поэтому здесь correlate2d не вызывается повторно.
         """
-        n = self.board_size
-        empty = (self.board.grid == 0)
-        visited = np.zeros((n, n), dtype=bool)
+        # valid_pos[k][py, px] = 1 если фигура k влезает в (py, px) без перекрытия.
+        # A_list[k] уже float32; приводим к uint8 для Cython (bool в numpy = uint8 под капотом).
+        valid_pos_list = [a.astype(np.uint8) for a in A_list]
 
-        grid_f = self.board.grid.astype(np.float32)
-        current_piece_mats = [self.piece_pool[idx].astype(np.float32) for idx in self.current_pieces]
-
-        # Позиции где каждая фигура влезает на текущую доску — не зависит от компоненты
-        valid_pos_per_piece = [
-            (correlate2d(grid_f, piece, mode='valid') == 0)
+        # piece_offset_arrays[k] — координаты клеток фигуры k: shape (K, 2) int32
+        piece_offset_arrays = [
+            np.argwhere(piece > 0).astype(np.int32)
             for piece in current_piece_mats
         ]
 
+        if _FAST_BFS:
+            return _fast_bnd(self.board.grid, valid_pos_list, piece_offset_arrays)
+
+        # --- Python fallback ---
+        n = self.board_size
+        empty = (self.board.grid == 0)
+        visited = np.zeros((n, n), dtype=bool)
         best_component: list[tuple[int, int]] = []
         dead_cells: list[tuple[int, int]] = []
 
@@ -213,28 +233,28 @@ class BlockPuzzleEnv(gym.Env):
                     best_component = component
 
                 if current_piece_mats:
-                    comp_mask = np.zeros((n, n), dtype=np.float32)
-                    for y, x in component:
-                        comp_mask[y, x] = 1.0
-
                     is_dead = True
-                    for piece, valid_pos in zip(current_piece_mats, valid_pos_per_piece):
-                        touches = (correlate2d(comp_mask, piece, mode='valid') > 0)
-                        if np.any(valid_pos & touches):
-                            is_dead = False
+                    for vp, off_arr in zip(valid_pos_list, piece_offset_arrays):
+                        vp_h, vp_w = vp.shape
+                        for cy, cx in component:
+                            if not is_dead:
+                                break
+                            for pr, pc in off_arr:
+                                py, px = cy - pr, cx - pc
+                                if 0 <= py < vp_h and 0 <= px < vp_w and vp[py, px]:
+                                    is_dead = False
+                                    break
+                        if not is_dead:
                             break
-
                     if is_dead:
                         dead_cells.extend(component)
 
         blob_ch = np.zeros((n, n), dtype=np.float32)
         for y, x in best_component:
             blob_ch[y, x] = 1.0
-
         dead_ch = np.zeros((n, n), dtype=np.float32)
         for y, x in dead_cells:
             dead_ch[y, x] = 1.0
-
         return blob_ch, dead_ch
 
     def _pieces_matrices(self) -> list[np.ndarray]:
