@@ -17,36 +17,29 @@ except ImportError:
     _FAST_BFS = False
 
 
+# Число каналов наблюдения (Gen 4):
+#   0:    игровое поле (binary)
+#   1-3:  текущие три фигуры (форма в левом верхнем углу)
+#   4:    заполненность строк — row_fill[i] broadcast по всей строке i
+#   5:    заполненность столбцов — col_fill[j] broadcast по всему столбцу j
+#   6-8:  placement heatmap для каждой фигуры
+#   9-11: survivability heatmap для каждой фигуры (lookahead внутри раунда)
+#   12:   largest empty blob map
+#   13:   dead zone mask
+#   14:   holes-from-border mask (пустые клетки, недостижимые с границы поля)
+N_CHANNELS = 15
+
+
 class BlockPuzzleEnv(gym.Env):
     """
     Block Puzzle окружение.
 
     Observation Space:
-        Box(float32, shape=(14, 8, 8)) — 14 каналов:
-            0:    игровое поле (binary)
-            1-3:  текущие три фигуры (форма в левом верхнем углу)
-            4:    заполненность строк — row_fill[i] broadcast по всей строке i
-            5:    заполненность столбцов — col_fill[j] broadcast по всему столбцу j
-            6-8:  placement heatmap для каждой фигуры:
-                  1.0 в (y,x) если фигуру можно поставить с верхним левым углом в (x,y)
-            9-11: survivability heatmap для каждой фигуры:
-                  для каждой валидной позиции фигуры i — сколько суммарно
-                  валидных ходов остаётся у ОСТАЛЬНЫХ фигур после этого размещения,
-                  нормировано на [0, 1]. Даёт lookahead внутри раунда.
-            12:   largest empty blob map — бинарная маска крупнейшей связной
-                  компоненты пустых клеток. Агент видит "территорию".
-            13:   dead zone mask — бинарная маска клеток в пустых компонентах,
-                  куда не влезет ни одна фигура из пула. Гарантированный балласт.
-        ВАЖНО: CnnPolicy в stable-baselines3 требует float32.
-        Канал (H, W) интерпретируется как (C, H, W).
+        Box(float32, shape=(15, board_size, board_size))
 
     Action Space:
-        Discrete(3 * 8 * 8 = 192)
-        action = slot_idx * 64 + y * 8 + x
-
-    Action Mask:
-        Метод action_masks() возвращает bool-вектор длиной 192.
-        MaskablePPO использует его через ActionMasker, исключая невалидные действия из сэмплирования — агент никогда не выбирает запрещённое действие.
+        Discrete(3 * board_size * board_size)
+        action = slot_idx * board_size² + y * board_size + x
     """
 
     metadata = {"render_modes": ["human"]}
@@ -63,32 +56,20 @@ class BlockPuzzleEnv(gym.Env):
             ENV["pieces_per_round"] * self.board_size * self.board_size
         )
 
-        # float32 обязателен для CnnPolicy
-        # 14 каналов (Gen 3):
-        #   0:    игровое поле (binary)
-        #   1-3:  формы текущих фигур (в левом верхнем углу)
-        #   4:    заполненность строк (row_fill broadcast)
-        #   5:    заполненность столбцов (col_fill broadcast)
-        #   6-8:  placement heatmap для каждой фигуры
-        #   9-11: survivability heatmap для каждой фигуры (lookahead внутри раунда)
-        #   12:   largest empty blob map
-        #   13:   dead zone mask
         self.observation_space = spaces.Box(
             low=0.0, high=1.0,
-            shape=(14, self.board_size, self.board_size),
+            shape=(N_CHANNELS, self.board_size, self.board_size),
             dtype=np.float32,
         )
 
         self.current_pieces: list[int] = []
         self.render_mode = render_mode
 
-        # Статистика эпизода (для TensorBoard callback)
         self._ep_lines_cleared = 0
         self._ep_perfect_clears = 0
         self._ep_pieces_placed = 0
 
         # Кэш FFT(B_ext) для survivability: ключ (i_pool_idx, j_pool_idx).
-        # B_ext зависит только от пары фигур, не от состояния доски — вычисляется один раз.
         self._surv_fft_cache: dict = {}
 
     # ------------------------------------------------------------------
@@ -96,8 +77,8 @@ class BlockPuzzleEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self) -> np.ndarray:
-        obs = np.zeros((14, self.board_size, self.board_size), dtype=np.float32)
         n = self.board_size
+        obs = np.zeros((N_CHANNELS, n, n), dtype=np.float32)
 
         # Канал 0: игровое поле
         obs[0] = self.board.grid.astype(np.float32)
@@ -116,25 +97,18 @@ class BlockPuzzleEnv(gym.Env):
         col_fills = self.board.grid.sum(axis=0).astype(np.float32) / n
         obs[5] = col_fills[np.newaxis, :]
 
-        # Каналы 6-8: placement heatmap (из action_mask — нет дублирования can_place)
+        # Каналы 6-8: placement heatmap
         mask = self.board.compute_action_mask(self.piece_pool, self.current_pieces, n)
         for i in range(len(self.current_pieces)):
             slot_mask = mask[i * n * n : (i + 1) * n * n]
             obs[6 + i] = slot_mask.reshape(n, n).astype(np.float32)
 
-        # Каналы 9-11: survivability heatmap + каналы 12-13: blob / dead-zone.
-        #
-        # Оптимизации:
-        #   1. A_list[k] = valid_pos для piece k вычисляется ОДИН РАЗ и переиспользуется
-        #      в survivability (было: 2×num_pieces вызовов) и в _compute_blob_and_dead_zone
-        #      (было: ещё num_pieces вызовов). Итого: num_pieces вызовов вместо 3×num_pieces.
-        #   2. FFT(B_ext) кэшируется по (i_pool_idx, j_pool_idx): B_ext зависит только от
-        #      пары фигур, не от доски. Ручной rfft2(A)×cached_B→irfft2 вместо fftconvolve.
+        # Каналы 9-11: survivability heatmap + каналы 12-13: blob / dead-zone
         num_pieces = len(self.current_pieces)
         board_f32 = self.board.grid.astype(np.float32)
         current_piece_mats = [self.piece_pool[idx].astype(np.float32) for idx in self.current_pieces]
 
-        # A_list[k]: где фигура k влезает на текущую доску — shape (n-hk+1, n-wk+1), float32
+        # A_list[k]: где фигура k влезает на текущую доску
         A_list = [
             (correlate2d(board_f32, piece, mode='valid') == 0).astype(np.float32)
             for piece in current_piece_mats
@@ -155,7 +129,7 @@ class BlockPuzzleEnv(gym.Env):
                     j_pool = self.current_pieces[j]
                     pj = current_piece_mats[j]
                     hj, wj = pj.shape
-                    A_j = A_list[j]  # переиспользуем, не вычисляем заново
+                    A_j = A_list[j]
 
                     cache_key = (i_pool, j_pool)
                     if cache_key not in self._surv_fft_cache:
@@ -174,8 +148,11 @@ class BlockPuzzleEnv(gym.Env):
 
                 obs[9 + i] = surv * placement_map / norm
 
-        # Каналы 12-13: blob и dead-zone — передаём уже вычисленные A_list и piece_mats
+        # Каналы 12-13: blob и dead-zone
         obs[12], obs[13] = self._compute_blob_and_dead_zone(A_list, current_piece_mats)
+
+        # Канал 14: holes-from-border (пустые клетки, недостижимые с границы)
+        obs[14] = self._compute_holes_from_border()
 
         return obs
 
@@ -184,19 +161,8 @@ class BlockPuzzleEnv(gym.Env):
         A_list: list,
         current_piece_mats: list,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Единственный BFS по пустым клеткам, вычисляет оба канала за один проход.
-        Если скомпилирован _fast.pyx — делегирует в C (Cython).
-        Python-путь оставлен как запасной на случай если .so не собран.
-
-        A_list и current_piece_mats передаются из _get_obs — там они уже вычислены
-        для survivability, поэтому здесь correlate2d не вызывается повторно.
-        """
-        # valid_pos[k][py, px] = 1 если фигура k влезает в (py, px) без перекрытия.
-        # A_list[k] уже float32; приводим к uint8 для Cython (bool в numpy = uint8 под капотом).
+        """Единственный BFS по пустым клеткам, вычисляет blob и dead-zone."""
         valid_pos_list = [a.astype(np.uint8) for a in A_list]
-
-        # piece_offset_arrays[k] — координаты клеток фигуры k: shape (K, 2) int32
         piece_offset_arrays = [
             np.argwhere(piece > 0).astype(np.int32)
             for piece in current_piece_mats
@@ -205,7 +171,6 @@ class BlockPuzzleEnv(gym.Env):
         if _FAST_BFS:
             return _fast_bnd(self.board.grid, valid_pos_list, piece_offset_arrays)
 
-        # --- Python fallback ---
         n = self.board_size
         empty = (self.board.grid == 0)
         visited = np.zeros((n, n), dtype=bool)
@@ -257,6 +222,37 @@ class BlockPuzzleEnv(gym.Env):
             dead_ch[y, x] = 1.0
         return blob_ch, dead_ch
 
+    def _compute_holes_from_border(self) -> np.ndarray:
+        """
+        BFS от всех граничных пустых клеток.
+        Незатронутые пустые клетки — «дыры»: замурованы и никогда не очистятся.
+        Это симметричный аналог признака holes в HeuristicAgent с весом −6.
+        """
+        n = self.board_size
+        grid = self.board.grid
+        visited = np.zeros((n, n), dtype=bool)
+        queue: list[tuple[int, int]] = []
+
+        for i in range(n):
+            for j in (0, n - 1):
+                if grid[i, j] == 0 and not visited[i, j]:
+                    visited[i, j] = True
+                    queue.append((i, j))
+                if grid[j, i] == 0 and not visited[j, i]:
+                    visited[j, i] = True
+                    queue.append((j, i))
+
+        while queue:
+            r, c = queue.pop()
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < n and 0 <= nc < n and not visited[nr, nc] and grid[nr, nc] == 0:
+                    visited[nr, nc] = True
+                    queue.append((nr, nc))
+
+        holes = ((grid == 0) & ~visited).astype(np.float32)
+        return holes
+
     def _pieces_matrices(self) -> list[np.ndarray]:
         return [self.piece_pool[i] for i in self.current_pieces]
 
@@ -272,7 +268,6 @@ class BlockPuzzleEnv(gym.Env):
         return None
 
     def _ep_info(self) -> dict:
-        """Словарь с метриками эпизода для callback."""
         return {
             "ep_lines_cleared": self._ep_lines_cleared,
             "ep_perfect_clears": self._ep_perfect_clears,
@@ -284,13 +279,6 @@ class BlockPuzzleEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def action_masks(self) -> np.ndarray:
-        """
-        Bool-вектор длиной action_space.n.
-        True  — действие валидно (можно поставить фигуру в эту позицию).
-        False — запрещено.
-
-        MaskablePPO использует маску при сэмплировании, поэтому агент физически не может выбрать невалидное действие — нет штрафов за неверный ход, обучение быстрее и стабильнее.
-        """
         return self.board.compute_action_mask(
             self.piece_pool, self.current_pieces, self.board_size
         )
@@ -320,17 +308,17 @@ class BlockPuzzleEnv(gym.Env):
 
     def step(self, action: int):
         self._step_count += 1
+        n = self.board_size
 
-        slot_idx = action // (self.board_size * self.board_size)
-        coords   = action %  (self.board_size * self.board_size)
-        y = coords // self.board_size
-        x = coords %  self.board_size
+        slot_idx = action // (n * n)
+        coords   = action %  (n * n)
+        y = coords // n
+        x = coords %  n
 
         reward     = 0.0
         terminated = False
         truncated  = False
 
-        # --- Защита от невалидного хода (не должна срабатывать с маской) ---
         if slot_idx >= len(self.current_pieces) or \
                 not self.board.can_place(self.piece_pool[self.current_pieces[slot_idx]], x, y):
             reward = REWARD["invalid_move"]
@@ -340,34 +328,25 @@ class BlockPuzzleEnv(gym.Env):
                 **self._ep_info(),
             }
 
-        # --- Размещаем фигуру ---
         piece = self.piece_pool[self.current_pieces[slot_idx]]
         self.board.place_piece(piece, x, y)
         reward += REWARD["place_piece"]
         self._ep_pieces_placed += 1
 
-        # --- Потенциальная награда за клетки (cell_potential) ---
-        # Для каждой клетки фигуры: чем заполненнее её строка/столбец ПОСЛЕ
-        # размещения, тем выше награда. Максимум = 1.0 когда клетка завершает
-        # строку (row_fill=1.0) — непосредственно перед очисткой.
-        # Даёт критику плотный state-dependent сигнал о прогрессе к очистке.
+        # cell_potential: для каждой клетки фигуры — насколько заполнены её строка/столбец
         cell_reward = 0.0
         for pr in range(piece.shape[0]):
             for pc in range(piece.shape[1]):
                 if piece[pr, pc]:
                     r, c = y + pr, x + pc
-                    row_fill = float(np.sum(self.board.grid[r])) / self.board_size
-                    col_fill = float(np.sum(self.board.grid[:, c])) / self.board_size
+                    row_fill = float(np.sum(self.board.grid[r])) / n
+                    col_fill = float(np.sum(self.board.grid[:, c])) / n
                     cell_reward += (row_fill + col_fill) / 2.0
         reward += REWARD["cell_potential"] * cell_reward
 
-        # --- Одновременная очистка строк и столбцов ---
         lines_cleared, is_perfect_clear = self.board.clear_lines_and_score()
 
         if lines_cleared > 0:
-            # Combo: чем больше линий за раз, тем выгоднее.
-            # combo_multiplier=1.0 — линейная шкала (без бонуса).
-            # combo_multiplier=0   — НЕВЕРНО: 2+ линий дают нулевую награду (0^1=0).
             combo = REWARD["combo_multiplier"] if REWARD["combo_multiplier"] > 0 else 1.0
             reward += REWARD["line_cleared"] * lines_cleared * (combo ** (lines_cleared - 1))
             self._ep_lines_cleared += lines_cleared
@@ -376,13 +355,10 @@ class BlockPuzzleEnv(gym.Env):
             reward += REWARD["perfect_clear"]
             self._ep_perfect_clears += 1
 
-        # --- Убираем использованную фигуру ---
         self.current_pieces.pop(slot_idx)
 
-        # --- Проверяем game over СРАЗУ после хода ---
         remaining = self._pieces_matrices()
         if remaining and not self.board.has_valid_moves(remaining):
-            # Оставшиеся фигуры некуда поставить — конец
             terminated = True
             occupied = int(np.sum(self.board.grid))
             reward += REWARD["game_over"] + occupied * REWARD["game_over_per_cell"]
@@ -394,7 +370,6 @@ class BlockPuzzleEnv(gym.Env):
                 **self._ep_info(),
             }
 
-        # --- Если все фигуры текущего раунда использованы — генерируем новые ---
         if len(self.current_pieces) == 0:
             new_pieces = self._generate_valid_pieces()
             if new_pieces is None:
@@ -405,7 +380,6 @@ class BlockPuzzleEnv(gym.Env):
                 reward += REWARD["round_complete"]
                 self.current_pieces = new_pieces
 
-        # --- Truncation по лимиту шагов ---
         if not terminated and self._step_count >= self._max_steps:
             truncated = True
 

@@ -1,25 +1,22 @@
 """
-run_training.py - единая точка запуска обучения для MLP и CNN архитектур.
-
-КЛЮЧЕВОЕ ИЗМЕНЕНИЕ v2: добавлен VecNormalize для нормализации наград.
-Проблема предыдущей версии: explained_variance = 0.03 на 5млн (норма > 0.8).
-Причина: combo-награды создают огромную дисперсию (от -3 до +500+),
-критик не может стабильно предсказывать возвраты => градиент политики - шум.
-Решение: VecNormalize нормализует награды через бегущее среднее/std,
-что возвращает все сигналы в диапазон ~[-5, +5].
+run_training.py — единая точка запуска обучения (MLP / CNN / Spatial CNN).
 
 Использование:
-    python run_training.py --arch mlp --run-name mlp_v2
-    python run_training.py --arch cnn --run-name cnn_v2
-    python run_training.py --arch mlp --run-name mlp_v2 --timesteps 2000000 --n-envs 4
-    python run_training.py --arch mlp --run-name mlp_v2 \\
-        --resume ./models/checkpoints/mlp_puzzle_1000000_steps.zip
+    # Обычное обучение CNN с нуля
+    python training/run_training.py --arch cnn --run-name cnn_16x16_v1
 
-Структура файлов:
-    ./runs/<run_name>/                     — TensorBoard + training_console.log
-    ./models/checkpoints/                  — чекпоинты каждые checkpoint_freq шагов
-    ./models/<run_name>_final.zip          — финальная модель
-    ./models/<run_name>_vecnormalize.pkl   — статистика нормализации (нужна для eval!)
+    # CNN с Behavior Cloning warm-start
+    python training/bc_train.py                                    # фаза 1
+    python training/run_training.py --arch cnn --bc-pretrained ./models/bc_pretrained.zip
+
+    # Spatial CNN (пространственная голова актора)
+    python training/run_training.py --arch spatial --run-name spatial_16x16_v1
+
+    # MLP
+    python training/run_training.py --arch mlp --run-name mlp_16x16_v1
+
+    # Продолжить с чекпоинта
+    python training/run_training.py --arch cnn --resume ./models/checkpoints/cnn_puzzle_5000000_steps.zip
 """
 
 from __future__ import annotations
@@ -33,14 +30,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import gymnasium as gym
 import numpy as np
+import torch
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, VecNormalize
 
-from config import REWARD, ENV, LOGGING, MLP_TRAIN, CNN_TRAIN
+from config import REWARD, ENV, LOGGING, MLP_TRAIN, CNN_TRAIN, SPATIAL_CNN_TRAIN
 from block_puzzle_env.environment import BlockPuzzleEnv
 from utils.logger import TrainingLogger
+from utils.cnn_extractor import HierarchicalCNN, SpatialCNNExtractor, SpatialMaskableActorCriticPolicy
 
 
 # ================================================================== #
@@ -61,16 +60,10 @@ def _make_env(rank: int = 0, seed: int = 0):
 
 
 # ================================================================== #
-#  Callback: логирует ep-метрики + explained_variance предупреждение
+#  Callback: логирует ep-метрики
 # ================================================================== #
 
 class EpisodeStatsCallback(BaseCallback):
-    """
-    Логирует ep_lines_cleared, ep_pieces_placed, ep_perfect_clears
-    только при завершении эпизода (done=True).
-    Дополнительно предупреждает если explained_variance < 0.3 —
-    признак того что критик не обучается.
-    """
     def __init__(self, log_interval: int = 10, verbose: int = 0):
         super().__init__(verbose)
         self._log_interval = log_interval
@@ -97,9 +90,8 @@ class EpisodeStatsCallback(BaseCallback):
             self._perfect.clear()
             self._placed.clear()
 
-        # Предупреждение о плохом критике (проверяем раз, через 100k шагов)
         if (not self._ev_warned
-                and self.num_timesteps > 100_000
+                and self.num_timesteps > 200_000
                 and hasattr(self.model, "logger")):
             ev = self.model.logger.name_to_value.get("train/explained_variance", None)
             if ev is not None and ev < 0.1:
@@ -116,24 +108,66 @@ class EpisodeStatsCallback(BaseCallback):
 #  policy_kwargs
 # ================================================================== #
 
-def _build_policy_kwargs(train_cfg: dict) -> dict:
-    arch    = train_cfg["features_extractor"]
-    net_arch = train_cfg.get("net_arch", [256, 256])
+def _build_policy_kwargs(arch: str, train_cfg: dict) -> dict:
+    net_arch = train_cfg.get("net_arch", {"pi": [256, 256], "vf": [512, 512]})
 
-    if arch == "flatten":
+    if arch == "mlp":
         return {"net_arch": net_arch}
 
     if arch == "cnn":
-        from utils.cnn_extractor import SmallCNN
         return {
             "net_arch": net_arch,
-            "features_extractor_class":  SmallCNN,
+            "features_extractor_class":  HierarchicalCNN,
             "features_extractor_kwargs": {
-                "features_dim": train_cfg.get("features_dim", 256),
+                "features_dim": train_cfg.get("features_dim", 512),
             },
         }
 
-    raise ValueError(f"Неизвестный features_extractor: '{arch}'")
+    if arch == "spatial":
+        # Для spatial: pi-экстрактор = SpatialCNNExtractor, vf = HierarchicalCNN.
+        # SB3 с dict net_arch создаёт раздельные pi/vf экстракторы.
+        # features_extractor_class используется для обоих по умолчанию —
+        # для spatial нужна особая инициализация policy (см. SpatialMaskableActorCriticPolicy).
+        return {
+            "net_arch":                  {"pi": [], "vf": [512, 256]},
+            "features_extractor_class":  SpatialCNNExtractor,
+            "features_extractor_kwargs": {},
+        }
+
+    raise ValueError(f"Неизвестная архитектура: '{arch}'")
+
+
+# ================================================================== #
+#  Загрузка BC-весов в свежую PPO-модель
+# ================================================================== #
+
+def _load_bc_weights(model: MaskablePPO, bc_path: str) -> None:
+    """
+    Переносит веса policy (актор + feature extractor) из BC-модели в PPO.
+    Веса критика остаются случайными (он не обучался в BC).
+    """
+    print(f"[run_training] Загружаем BC-веса из: {bc_path}")
+    bc_model = MaskablePPO.load(bc_path)
+
+    bc_state    = bc_model.policy.state_dict()
+    model_state = model.policy.state_dict()
+
+    transferred, skipped = 0, 0
+    for name, param in bc_state.items():
+        # Копируем только pi-пути (актор + его feature extractor)
+        # Пропускаем vf_features_extractor и value_net
+        if "vf_features_extractor" in name or "value_net" in name:
+            skipped += 1
+            continue
+        if name in model_state and model_state[name].shape == param.shape:
+            model_state[name] = param.clone()
+            transferred += 1
+        else:
+            skipped += 1
+
+    model.policy.load_state_dict(model_state)
+    del bc_model
+    print(f"[run_training] BC-веса перенесены: {transferred} слоёв, пропущено: {skipped}")
 
 
 # ================================================================== #
@@ -146,24 +180,20 @@ def train(
     total_timesteps: int | None = None,
     n_envs: int | None = None,
     resume_path: str | None = None,
+    bc_pretrained: str | None = None,
     normalize_reward: bool = True,
 ) -> None:
-    """
-    Args:
-        arch:             "mlp" или "cnn"
-        run_name:         имя запуска. Если None — генерируется автоматически.
-        total_timesteps:  переопределяет значение из конфига.
-        n_envs:           переопределяет значение из конфига.
-        resume_path:      путь к .zip чекпоинту для продолжения обучения.
-        normalize_reward: включить VecNormalize для нормализации наград
-                          (реккомендуется, решает проблему explained_variance~0).
-    """
     if arch == "mlp":
         train_cfg = dict(MLP_TRAIN)
+        policy_cls = "MlpPolicy"
     elif arch == "cnn":
         train_cfg = dict(CNN_TRAIN)
+        policy_cls = "MlpPolicy"
+    elif arch == "spatial":
+        train_cfg = dict(SPATIAL_CNN_TRAIN)
+        policy_cls = SpatialMaskableActorCriticPolicy
     else:
-        raise ValueError(f"Неизвестная архитектура: '{arch}'. Допустимо: 'mlp', 'cnn'.")
+        raise ValueError(f"Неизвестная архитектура: '{arch}'. Допустимо: mlp, cnn, spatial.")
 
     if total_timesteps is not None:
         train_cfg["total_timesteps"] = total_timesteps
@@ -174,10 +204,9 @@ def train(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{arch}_{timestamp}"
 
-    save_path       = os.path.join(LOGGING["save_dir"], f"{run_name}_final")
-    vecnorm_path    = os.path.join(LOGGING["save_dir"], f"{run_name}_vecnormalize.pkl")
-    checkpoint_dir  = LOGGING["checkpoint_dir"]
-    checkpoint_prefix = f"{arch}_puzzle"
+    save_path      = os.path.join(LOGGING["save_dir"], f"{run_name}_final")
+    vecnorm_path   = os.path.join(LOGGING["save_dir"], f"{run_name}_vecnormalize.pkl")
+    checkpoint_dir = LOGGING["checkpoint_dir"]
 
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(LOGGING["save_dir"], exist_ok=True)
@@ -186,17 +215,14 @@ def train(
     total_ts      = train_cfg["total_timesteps"]
 
     print(f"[run_training] arch={arch.upper()}  run_name={run_name}")
+    print(f"[run_training] board_size={ENV['board_size']}×{ENV['board_size']}")
     print(f"[run_training] normalize_reward={normalize_reward}")
     print(f"[run_training] Создаём {n_envs_actual} параллельных окружений...")
 
-    # ── Векторное окружение ───────────────────────────────────────────
     vec_env = SubprocVecEnv([_make_env(rank=i, seed=42) for i in range(n_envs_actual)])
     vec_env = VecMonitor(vec_env)
 
     if normalize_reward:
-        # norm_obs=False — наблюдения уже в [0,1], нормировать не нужно
-        # norm_reward=True — нормируем награды через бегущее std
-        # clip_reward=10.0 — отсекаем экстремальные выбросы (perfect_clear=15 → ~3 std)
         vec_env = VecNormalize(
             vec_env,
             norm_obs=False,
@@ -205,8 +231,7 @@ def train(
             gamma=train_cfg.get("gamma", 0.99),
         )
 
-    # ── Модель ───────────────────────────────────────────────────────
-    policy_kwargs = _build_policy_kwargs(train_cfg)
+    policy_kwargs = _build_policy_kwargs(arch, train_cfg)
 
     if resume_path:
         print(f"[run_training] Загружаем чекпоинт: {resume_path}")
@@ -215,15 +240,10 @@ def train(
             env=vec_env,
             tensorboard_log=LOGGING["tensorboard_log"],
         )
-        # Восстановить VecNormalize статистику если она была сохранена
-        resume_vecnorm = resume_path.replace("_steps.zip", "_vecnormalize.pkl")
-        if normalize_reward and os.path.exists(resume_vecnorm):
-            vec_env = VecNormalize.load(resume_vecnorm, vec_env)
-            print(f"[run_training] VecNormalize статистика восстановлена: {resume_vecnorm}")
         reset_num_timesteps = False
     else:
         model = MaskablePPO(
-            policy=train_cfg["policy"],
+            policy=policy_cls,
             env=vec_env,
             learning_rate=train_cfg["learning_rate"],
             n_steps=train_cfg["n_steps"],
@@ -241,45 +261,20 @@ def train(
         )
         reset_num_timesteps = True
 
-    # ── Callback: сохранение чекпоинтов + VecNormalize статистики ────
-    class CheckpointWithVecNorm(CheckpointCallback):
-        """
-        Расширяет стандартный CheckpointCallback: вместе с моделью
-        сохраняет текущую статистику VecNormalize (running mean/std наград).
-        Без этого при resume обучение стартует с нуля по статистике,
-        что ломает нормализацию в первые итерации после возобновления.
-        Но с ним генерируется абсурдно большое количество .pkl файлов
-        Примерно 57 тысяч за ~500к шагов обучения mlp
-        """
-        def __init__(self, vec_env_ref, vecnorm_save_dir, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            # Убрал сохранение статистики нормализации до лучших времен
-            #self._vec_env_ref   = vec_env_ref
-            #self._vecnorm_dir   = vecnorm_save_dir
-
-        def _on_step(self) -> bool:
-            result = super()._on_step()
-            #if normalize_reward and isinstance(self._vec_env_ref, VecNormalize):
-            #   vecnorm_ckpt = os.path.join(
-            #        self._vecnorm_dir,
-            #        f"{checkpoint_prefix}_{self.num_timesteps}_vecnormalize.pkl"
-            #    )
-            #    self._vec_env_ref.save(vecnorm_ckpt)
-            return result
+    # BC warm-start: грузим веса актора из BC-модели
+    if bc_pretrained and not resume_path:
+        _load_bc_weights(model, bc_pretrained)
 
     callbacks = [
-        CheckpointWithVecNorm(
-            vec_env_ref=vec_env,
-            vecnorm_save_dir=checkpoint_dir,
+        CheckpointCallback(
             save_freq=max(LOGGING["checkpoint_freq"] // n_envs_actual, 1),
             save_path=checkpoint_dir,
-            name_prefix=checkpoint_prefix,
+            name_prefix=f"{arch}_puzzle",
             verbose=1,
         ),
         EpisodeStatsCallback(log_interval=LOGGING["log_interval"]),
     ]
 
-    # ── Логгер ───────────────────────────────────────────────────────
     log_file_path = os.path.join(
         LOGGING["tensorboard_log"], run_name, "training_console.log"
     )
@@ -289,8 +284,9 @@ def train(
         t_logger.log_model_info(model)
         t_logger.log_params({
             "ARCH":             arch.upper(),
+            "BC_PRETRAINED":    bc_pretrained,
             "normalize_reward": normalize_reward,
-            "TRAIN":            train_cfg,
+            "TRAIN":            {k: str(v) for k, v in train_cfg.items()},
             "REWARD":           REWARD,
             "ENV":              ENV,
         })
@@ -298,7 +294,8 @@ def train(
 
         try:
             print(f"[run_training] Начинаем обучение на {total_ts:,} шагов...")
-            print(f"[run_training] Ожидаемый explained_variance > 0.5 после 500k шагов\n")
+            if bc_pretrained:
+                print("[run_training] Старт с BC warm-start: ожидаем ~40+ lines с первых шагов")
 
             model.learn(
                 total_timesteps=total_ts,
@@ -308,15 +305,12 @@ def train(
                 progress_bar=True,
             )
 
-            # Сохранить модель
             model.save(save_path)
             print(f"[run_training] Модель сохранена: {save_path}.zip")
 
-            # Сохранить VecNormalize статистику (нужна для evaluate.py!)
             if normalize_reward and isinstance(vec_env, VecNormalize):
                 vec_env.save(vecnorm_path)
                 print(f"[run_training] VecNormalize сохранён: {vecnorm_path}")
-                print(f"[run_training] При оценке указывай --vecnormalize {vecnorm_path}")
 
         finally:
             t_logger.stop_capture()
@@ -330,28 +324,32 @@ def train(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Block Puzzle RL — запуск обучения MLP или CNN агента",
+        description="Block Puzzle RL — обучение MLP / CNN / Spatial CNN агента",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
-        "--arch", type=str, choices=["mlp", "cnn"], default="mlp",
-        help="Архитектура: mlp или cnn (default: mlp)"
+        "--arch", type=str, choices=["mlp", "cnn", "spatial"], default="cnn",
+        help="Архитектура: mlp, cnn, spatial (default: cnn)"
     )
     parser.add_argument(
-        "--run-name", type=str, default=None, metavar="NAME",
+        "--run-name", type=str, default=None,
         help="Имя запуска. Если не задано — <arch>_<timestamp>"
-    )   
+    )
     parser.add_argument(
-        "--timesteps", type=int, default=None, metavar="N",
+        "--timesteps", type=int, default=None,
         help="Переопределить total_timesteps из конфига"
     )
     parser.add_argument(
-        "--n-envs", type=int, default=None, metavar="N",
+        "--n-envs", type=int, default=None,
         help="Переопределить число параллельных окружений"
     )
     parser.add_argument(
-        "--resume", type=str, default=None, metavar="PATH",
+        "--resume", type=str, default=None,
         help="Путь к .zip чекпоинту для продолжения обучения"
+    )
+    parser.add_argument(
+        "--bc-pretrained", type=str, default=None,
+        help="Путь к BC-модели для warm-start (из bc_train.py)"
     )
     parser.add_argument(
         "--no-normalize", action="store_true",
@@ -368,5 +366,6 @@ if __name__ == "__main__":
         total_timesteps=args.timesteps,
         n_envs=args.n_envs,
         resume_path=args.resume,
+        bc_pretrained=args.bc_pretrained,
         normalize_reward=not args.no_normalize,
     )
