@@ -61,7 +61,10 @@ def _make_mask_fn(env) -> np.ndarray:
 def collect_dataset(n_samples: int, save_path: str) -> None:
     """
     Прогоняет HeuristicAgent и собирает (obs, action) пары.
-    Данные сохраняются как .npz для переиспользования.
+
+    Пишет сразу на диск через np.memmap — не держит весь датасет в RAM.
+    500k × (15,16,16) × float32 = 7.68 ГБ в RAM → OOM.
+    С memmap: пиковое потребление RAM ~несколько МБ независимо от n_samples.
     """
     try:
         from tqdm import tqdm
@@ -69,12 +72,25 @@ def collect_dataset(n_samples: int, save_path: str) -> None:
     except ImportError:
         _tqdm_available = False
 
+    from block_puzzle_env.environment import N_CHANNELS
+    from config import ENV
+
+    n = ENV["board_size"]
+    obs_shape = (N_CHANNELS, n, n)
+    obs_bytes  = n_samples * N_CHANNELS * n * n * 4  / 1024**3
     print(f"[bc_train] Сбор датасета: {n_samples:,} пар от HeuristicAgent...")
+    print(f"[bc_train] Размер на диске: ~{obs_bytes:.1f} ГБ (obs float32) + actions")
+
+    # Предвыделяем memmap-файлы на диске — данные пишутся туда напрямую
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    obs_path = save_path.replace(".npz", "_obs.dat")
+    act_path = save_path.replace(".npz", "_act.dat")
+
+    obs_mm  = np.memmap(obs_path,  dtype=np.float32, mode="w+", shape=(n_samples, *obs_shape))
+    acts_mm = np.memmap(act_path,  dtype=np.int64,   mode="w+", shape=(n_samples,))
+
     env = BlockPuzzleEnv()
     agent = HeuristicAgent()
-
-    obs_list: list[np.ndarray] = []
-    act_list: list[int] = []
 
     obs, info = env.reset()
     total = 0
@@ -86,8 +102,10 @@ def collect_dataset(n_samples: int, save_path: str) -> None:
 
     while total < n_samples:
         action = agent.select_action(env)
-        obs_list.append(obs.copy())
-        act_list.append(action)
+
+        # Пишем прямо в memmap — нулевая доп. RAM
+        obs_mm[total]  = obs
+        acts_mm[total] = action
 
         obs, reward, terminated, truncated, info = env.step(action)
         ep_lines_buf += info.get("lines_cleared", 0)
@@ -114,16 +132,23 @@ def collect_dataset(n_samples: int, save_path: str) -> None:
     if bar is not None:
         bar.close()
 
+    # Сбрасываем на диск и закрываем
+    obs_mm.flush()
+    acts_mm.flush()
+    del obs_mm, acts_mm
+
     avg_all = np.mean(ep_lines) if ep_lines else 0.0
     print(f"[bc_train] Собрано: {total:,} шагов, {episodes} эпизодов, "
           f"среднее lines: {avg_all:.1f}")
 
-    obs_arr = np.stack(obs_list, axis=0).astype(np.float32)   # (N, C, H, W)
-    act_arr = np.array(act_list, dtype=np.int64)              # (N,)
-
-    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
-    np.savez_compressed(save_path, obs=obs_arr, actions=act_arr)
-    print(f"[bc_train] Датасет сохранён: {save_path} ({obs_arr.shape})")
+    # Сохраняем метаданные в .npz (только shape и пути к .dat файлам — сами данные уже на диске)
+    np.savez(save_path,
+             n_samples=np.array(n_samples),
+             obs_shape=np.array(obs_shape),
+             obs_path=np.array(obs_path),
+             act_path=np.array(act_path))
+    print(f"[bc_train] Метаданные сохранены: {save_path}")
+    print(f"[bc_train] Данные: {obs_path} + {act_path}")
 
 
 # ===========================================================================
@@ -149,19 +174,32 @@ def train_bc(
       - После N эпох сохраняем модель через model.save()
     """
     print(f"[bc_train] Загружаем датасет: {dataset_path}")
-    data = np.load(dataset_path)
-    obs_np  = data["obs"]       # (N, C, H, W)
-    acts_np = data["actions"]   # (N,)
-    N = len(acts_np)
-    print(f"[bc_train] Датасет: {N:,} пар, obs shape {obs_np.shape}")
+    meta = np.load(dataset_path, allow_pickle=True)
+    n_samples  = int(meta["n_samples"])
+    obs_shape  = tuple(meta["obs_shape"])
+    obs_path   = str(meta["obs_path"])
+    act_path   = str(meta["act_path"])
+
+    # Открываем memmap только для чтения — данные не грузятся в RAM целиком
+    obs_mm  = np.memmap(obs_path, dtype=np.float32, mode="r", shape=(n_samples, *obs_shape))
+    acts_mm = np.memmap(act_path, dtype=np.int64,   mode="r", shape=(n_samples,))
+    N = n_samples
+    print(f"[bc_train] Датасет: {N:,} пар, obs shape {(N, *obs_shape)}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[bc_train] Устройство: {device}")
 
-    obs_t  = torch.from_numpy(obs_np).to(device)
-    acts_t = torch.from_numpy(acts_np).to(device)
+    # MemmapDataset: батчи читаются с диска по мере надобности — RAM ≈ 1 батч
+    class MemmapDataset(torch.utils.data.Dataset):
+        def __init__(self, obs_mm, acts_mm):
+            self.obs  = obs_mm
+            self.acts = acts_mm
+        def __len__(self):
+            return len(self.acts)
+        def __getitem__(self, idx):
+            return torch.from_numpy(self.obs[idx].copy()), int(self.acts[idx])
 
-    dataset    = TensorDataset(obs_t, acts_t)
+    dataset    = MemmapDataset(obs_mm, acts_mm)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
     # Создаём модель чтобы получить правильную архитектуру политики
