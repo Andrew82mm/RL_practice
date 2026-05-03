@@ -54,6 +54,16 @@ def _make_mask_fn(env) -> np.ndarray:
     return env.action_masks()
 
 
+class MemmapDataset(torch.utils.data.Dataset):
+    def __init__(self, obs_mm, acts_mm):
+        self.obs  = obs_mm
+        self.acts = acts_mm
+    def __len__(self):
+        return len(self.acts)
+    def __getitem__(self, idx):
+        return torch.from_numpy(self.obs[idx].copy()), int(self.acts[idx])
+
+
 # ===========================================================================
 # Фаза 1: сбор данных
 # ===========================================================================
@@ -188,16 +198,6 @@ def train_bc(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[bc_train] Устройство: {device}")
-
-    # MemmapDataset: батчи читаются с диска по мере надобности — RAM ≈ 1 батч
-    class MemmapDataset(torch.utils.data.Dataset):
-        def __init__(self, obs_mm, acts_mm):
-            self.obs  = obs_mm
-            self.acts = acts_mm
-        def __len__(self):
-            return len(self.acts)
-        def __getitem__(self, idx):
-            return torch.from_numpy(self.obs[idx].copy()), int(self.acts[idx])
 
     dataset    = MemmapDataset(obs_mm, acts_mm)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True,
