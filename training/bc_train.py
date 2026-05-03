@@ -201,7 +201,8 @@ def train_bc(
 
     dataset    = MemmapDataset(obs_mm, acts_mm)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True,
-                            num_workers=4, pin_memory=True, persistent_workers=True)
+                            num_workers=2, pin_memory=True, persistent_workers=True,
+                            multiprocessing_context="spawn")
 
     # Создаём модель чтобы получить правильную архитектуру политики
     env = BlockPuzzleEnv()
