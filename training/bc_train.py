@@ -245,6 +245,8 @@ def train_bc(
 
         for obs_batch, acts_batch in dataloader:
             optimizer.zero_grad()
+            obs_batch  = obs_batch.to(device)
+            acts_batch = acts_batch.to(device)
 
             # Forward через actor-path политики
             features = policy.pi_features_extractor(obs_batch)

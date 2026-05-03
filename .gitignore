@@ -17,6 +17,10 @@ env/
 models/
 *.pkl
 
+# ── BC-датасеты (memmap, могут весить несколько ГБ) ──────────────────────────
+*.dat
+*.npz
+
 # ── TensorBoard + training_console.log ───────────────────────────────────────
 runs/
 
