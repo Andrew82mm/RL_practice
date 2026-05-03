@@ -200,7 +200,8 @@ def train_bc(
             return torch.from_numpy(self.obs[idx].copy()), int(self.acts[idx])
 
     dataset    = MemmapDataset(obs_mm, acts_mm)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+                            num_workers=4, pin_memory=True, persistent_workers=True)
 
     # Создаём модель чтобы получить правильную архитектуру политики
     env = BlockPuzzleEnv()
