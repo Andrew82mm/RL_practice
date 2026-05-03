@@ -172,6 +172,7 @@ def train_bc(
     batch_size: int,
     lr: float,
     weight_decay: float,
+    checkpoint_every: int = 5,
 ) -> None:
     """
     Supervised обучение CNN-политики на BC-датасете.
@@ -271,6 +272,15 @@ def train_bc(
 
         if epoch % 5 == 0 or epoch == 1:
             print(f"  Эпоха {epoch:3d}/{n_epochs}  loss={avg_loss:.4f}  acc={acc:.3f}  best_acc={best_acc:.3f}  lr={scheduler.get_last_lr()[0]:.2e}")
+
+        if epoch % checkpoint_every == 0:
+            policy.to("cpu")
+            model.policy.load_state_dict(policy.state_dict())
+            ckpt_path = f"{pretrained_path}_ckpt_ep{epoch}"
+            os.makedirs(os.path.dirname(ckpt_path) or ".", exist_ok=True)
+            model.save(ckpt_path)
+            policy.to(device)
+            print(f"  [ckpt] Сохранён: {ckpt_path}.zip")
 
     print(f"\n[bc_train] BC обучение завершено. Лучший acc = {best_acc:.3f}")
 
