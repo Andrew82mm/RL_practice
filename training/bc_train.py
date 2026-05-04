@@ -303,7 +303,7 @@ def train_bc(
     os.makedirs(os.path.dirname(pretrained_path) or ".", exist_ok=True)
     model.save(pretrained_path)
     print(f"[bc_train] BC-модель сохранена: {pretrained_path}.zip")
-    print(f"[bc_train] Запуск PPO: python training/run_training.py --arch cnn --bc-pretrained {pretrained_path}.zip")
+    print(f"[bc_train] Запуск PPO: python training/run_training.py --arch {arch} --bc-pretrained {pretrained_path}.zip")
 
     env.close()
 
