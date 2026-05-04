@@ -47,7 +47,8 @@ from sb3_contrib.common.wrappers import ActionMasker
 from block_puzzle_env.environment import BlockPuzzleEnv
 from evaluation.baselines import HeuristicAgent
 from utils.cnn_extractor import HierarchicalCNN
-from config import BC_CONFIG, CNN_TRAIN, LOGGING
+from utils.vit_extractor import SmallViT
+from config import BC_CONFIG, CNN_TRAIN, VIT_TRAIN, LOGGING
 
 
 def _make_mask_fn(env) -> np.ndarray:
@@ -173,16 +174,12 @@ def train_bc(
     lr: float,
     weight_decay: float,
     checkpoint_every: int = 5,
+    arch: str = "cnn",
 ) -> None:
     """
-    Supervised обучение CNN-политики на BC-датасете.
+    Supervised обучение политики на BC-датасете.
     Сохраняет политику как MaskablePPO .zip (без оптимайзера — только веса).
-
-    Стратегия:
-      - Создаём MaskablePPO с HierarchicalCNN
-      - Обучаем только policy network (actor), critic не трогаем
-      - Loss: CrossEntropy(policy_logits, expert_action)
-      - После N эпох сохраняем модель через model.save()
+    Поддерживает arch="cnn" (HierarchicalCNN) и arch="vit" (SmallViT).
     """
     print(f"[bc_train] Загружаем датасет: {dataset_path}")
     meta = np.load(dataset_path, allow_pickle=True)
@@ -198,22 +195,36 @@ def train_bc(
     print(f"[bc_train] Датасет: {N:,} пар, obs shape {(N, *obs_shape)}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[bc_train] Устройство: {device}")
+    print(f"[bc_train] Устройство: {device}  arch={arch}")
 
     dataset    = MemmapDataset(obs_mm, acts_mm)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
-    # Создаём модель чтобы получить правильную архитектуру политики
     env = BlockPuzzleEnv()
     env = ActionMasker(env, _make_mask_fn)
 
-    policy_kwargs = {
-        "net_arch": CNN_TRAIN["net_arch"],
-        "features_extractor_class":  HierarchicalCNN,
-        "features_extractor_kwargs": {
-            "features_dim": CNN_TRAIN.get("features_dim", 512),
-        },
-    }
+    if arch == "vit":
+        train_cfg = VIT_TRAIN
+        policy_kwargs = {
+            "net_arch": train_cfg["net_arch"],
+            "features_extractor_class":  SmallViT,
+            "features_extractor_kwargs": {
+                "features_dim": train_cfg["features_dim"],
+                "embed_dim":    train_cfg["embed_dim"],
+                "n_heads":      train_cfg["n_heads"],
+                "n_layers":     train_cfg["n_layers"],
+                "ffn_dim":      train_cfg["ffn_dim"],
+            },
+        }
+    else:  # cnn
+        train_cfg = CNN_TRAIN
+        policy_kwargs = {
+            "net_arch": train_cfg["net_arch"],
+            "features_extractor_class":  HierarchicalCNN,
+            "features_extractor_kwargs": {
+                "features_dim": train_cfg["features_dim"],
+            },
+        }
 
     model = MaskablePPO(
         policy="MlpPolicy",
@@ -338,6 +349,10 @@ def _parse_args() -> argparse.Namespace:
         "--lr", type=float, default=BC_CONFIG["lr"],
         help=f"Learning rate (default: {BC_CONFIG['lr']})"
     )
+    parser.add_argument(
+        "--arch", type=str, default="cnn", choices=["cnn", "vit"],
+        help="Архитектура политики: cnn (HierarchicalCNN) или vit (SmallViT) (default: cnn)"
+    )
     return parser.parse_args()
 
 
@@ -355,4 +370,5 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             lr=args.lr,
             weight_decay=BC_CONFIG["weight_decay"],
+            arch=args.arch,
         )

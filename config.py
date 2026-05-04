@@ -141,6 +141,30 @@ CNN_TRAIN = {
 }
 
 # ----------------------------------------------------------
+# Small ViT — Vision Transformer как замена HierarchicalCNN
+#
+# Архитектура SmallViT (вход C × 16 × 16):
+#   PatchEmbed: 16 патчей 4×4, Linear(C*16 → embed_dim)
+#   + learnable position embeddings (16 позиций)
+#   TransformerEncoder: n_layers × (Pre-LN + MHA + FFN)
+#   Mean-pool → Linear(embed_dim → features_dim) + ReLU
+#
+# ~1.25M параметров (embed_dim=256, n_layers=2, n_heads=4, ffn_dim=512)
+# ----------------------------------------------------------
+VIT_TRAIN = {
+    **_PPO_BASE,
+    "learning_rate":     _linear_schedule(5e-5, 5e-6),
+    "policy":            "MlpPolicy",
+    "features_dim":      512,
+    "embed_dim":         256,
+    "n_heads":           4,
+    "n_layers":          2,
+    "ffn_dim":           512,
+    "net_arch":          {"pi": [512, 256], "vf": [1024, 512]},
+    "features_extractor": "vit",
+}
+
+# ----------------------------------------------------------
 # Spatial CNN — CNN с пространственной головой политики
 #
 # Актор использует SpatialCNNExtractor: лёгкий encoder-decoder

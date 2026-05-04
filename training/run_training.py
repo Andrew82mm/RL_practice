@@ -36,10 +36,11 @@ from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, VecNormalize
 
-from config import REWARD, ENV, LOGGING, MLP_TRAIN, CNN_TRAIN, SPATIAL_CNN_TRAIN
+from config import REWARD, ENV, LOGGING, MLP_TRAIN, CNN_TRAIN, SPATIAL_CNN_TRAIN, VIT_TRAIN
 from block_puzzle_env.environment import BlockPuzzleEnv
 from utils.logger import TrainingLogger
 from utils.cnn_extractor import HierarchicalCNN, SpatialCNNExtractor, SpatialMaskableActorCriticPolicy
+from utils.vit_extractor import SmallViT
 
 
 # ================================================================== #
@@ -123,6 +124,19 @@ def _build_policy_kwargs(arch: str, train_cfg: dict) -> dict:
             },
         }
 
+    if arch == "vit":
+        return {
+            "net_arch": net_arch,
+            "features_extractor_class":  SmallViT,
+            "features_extractor_kwargs": {
+                "features_dim": train_cfg.get("features_dim", 512),
+                "embed_dim":    train_cfg.get("embed_dim", 256),
+                "n_heads":      train_cfg.get("n_heads", 4),
+                "n_layers":     train_cfg.get("n_layers", 2),
+                "ffn_dim":      train_cfg.get("ffn_dim", 512),
+            },
+        }
+
     if arch == "spatial":
         # Для spatial: pi-экстрактор = SpatialCNNExtractor, vf = HierarchicalCNN.
         # SB3 с dict net_arch создаёт раздельные pi/vf экстракторы.
@@ -189,11 +203,14 @@ def train(
     elif arch == "cnn":
         train_cfg = dict(CNN_TRAIN)
         policy_cls = "MlpPolicy"
+    elif arch == "vit":
+        train_cfg = dict(VIT_TRAIN)
+        policy_cls = "MlpPolicy"
     elif arch == "spatial":
         train_cfg = dict(SPATIAL_CNN_TRAIN)
         policy_cls = SpatialMaskableActorCriticPolicy
     else:
-        raise ValueError(f"Неизвестная архитектура: '{arch}'. Допустимо: mlp, cnn, spatial.")
+        raise ValueError(f"Неизвестная архитектура: '{arch}'. Допустимо: mlp, cnn, vit, spatial.")
 
     if total_timesteps is not None:
         train_cfg["total_timesteps"] = total_timesteps
