@@ -97,16 +97,24 @@ class PPOAgent:
         return _Named
 
     def select_action(self, env: BlockPuzzleEnv) -> int:
-        obs  = env._get_obs()[np.newaxis]
-        # Модели разных поколений обучались с разным числом каналов (6 или 14).
-        # Обрезаем obs до ожидаемого числа каналов, чтобы старые модели работали
-        # в текущей среде.
+        import torch
+        obs = env._get_obs()[np.newaxis]
+        # Обрезаем obs до ожидаемого числа каналов (для совместимости со старыми моделями)
         expected_ch = self.model.observation_space.shape[0]
         if obs.shape[1] != expected_ch:
             obs = obs[:, :expected_ch, :, :]
-        mask = env.action_masks()[np.newaxis]
-        action, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
-        return int(action.item())
+        mask = env.action_masks()  # (n_actions,) bool
+
+        # Считаем логиты напрямую, минуя SB3 distribution (обход Simplex validation в PyTorch 2.x)
+        policy = self.model.policy
+        with torch.no_grad():
+            obs_t = torch.as_tensor(obs, dtype=torch.float32)
+            features = policy.extract_features(obs_t, policy.pi_features_extractor)
+            latent_pi = policy.mlp_extractor.forward_actor(features)
+            logits = policy.action_net(latent_pi)[0].cpu().numpy()  # (n_actions,)
+
+        logits[~mask] = -1e8  # маскируем невалидные действия
+        return int(np.argmax(logits))
 
 
 # ================================================================== #
