@@ -345,8 +345,8 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
-        "--arch", type=str, choices=["mlp", "cnn", "spatial"], default="cnn",
-        help="Архитектура: mlp, cnn, spatial (default: cnn)"
+        "--arch", type=str, choices=["mlp", "cnn", "vit", "spatial"], default="cnn",
+        help="Архитектура: mlp, cnn, vit, spatial (default: cnn)"
     )
     parser.add_argument(
         "--run-name", type=str, default=None,
