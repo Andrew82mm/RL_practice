@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Block Puzzle RL Visualizer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d1a;
+      color: #dde0ff;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px 16px 40px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #7eb8ff;
+      margin-bottom: 20px;
+      font-weight: 300;
+    }
+
+    /* ── Load screen ── */
+    #loadScreen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      margin-top: 60px;
+    }
+
+    #loadScreen p { color: #666899; font-size: 0.9rem; }
+
+    .load-btn {
+      background: #3a7fd5;
+      color: #fff;
+      border: none;
+      padding: 12px 36px;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .load-btn:hover  { background: #2060b0; }
+    .load-btn:active { transform: scale(0.97); }
+
+    /* ── App layout ── */
+    #app { display: none; flex-direction: column; align-items: center; gap: 14px; width: 100%; max-width: 1060px; }
+    #app.visible { display: flex; }
+
+    .top-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    select.ep-sel {
+      background: #1a1a2e;
+      border: 1px solid #2e2e50;
+      color: #dde0ff;
+      border-radius: 7px;
+      padding: 7px 14px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .model-tag {
+      font-size: 0.72rem;
+      color: #555880;
+      padding: 4px 10px;
+      border: 1px solid #2e2e50;
+      border-radius: 6px;
+    }
+
+    .small-btn {
+      background: #1a1a2e;
+      color: #9999cc;
+      border: 1px solid #2e2e50;
+      padding: 6px 14px;
+      border-radius: 7px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .small-btn:hover { background: #252545; }
+
+    /* ── Main row ── */
+    .main-row {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    /* ── Board ── */
+    #boardCanvas {
+      display: block;
+      border-radius: 10px;
+      border: 2px solid #1e1e38;
+      box-shadow: 0 0 40px rgba(74,158,255,0.07);
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 220px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .panel {
+      background: #13132a;
+      border: 1px solid #1e1e3a;
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .panel-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #5577bb;
+      margin-bottom: 12px;
+    }
+
+    /* Pieces */
+    .piece-slot {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 10px;
+      padding: 6px;
+      border-radius: 7px;
+      border: 1px solid transparent;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .piece-slot:last-child { margin-bottom: 0; }
+    .piece-slot.active {
+      border-color: rgba(0,255,136,0.4);
+      background: rgba(0,255,136,0.05);
+    }
+    .piece-slot.inactive { opacity: 0.25; }
+
+    .slot-num {
+      font-size: 0.65rem;
+      color: #555880;
+      min-width: 14px;
+      margin-top: 4px;
+    }
+    .piece-slot.active .slot-num { color: #00dd88; font-weight: 700; }
+
+    /* Stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat-box {
+      background: #0d0d1a;
+      border-radius: 7px;
+      padding: 9px 6px;
+      text-align: center;
+    }
+    .stat-val  { font-size: 1.5rem; font-weight: 700; color: #4a9eff; line-height: 1; }
+    .stat-lbl  { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.8px; color: #555880; margin-top: 3px; }
+    .stat-val.green  { color: #00dd88; }
+    .stat-val.orange { color: #ffaa33; }
+    .stat-val.red    { color: #ff5555; }
+    .stat-val.dim    { color: #555880; }
+
+    .lines-flash {
+      text-align: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #ffaa33;
+      margin-top: 8px;
+      min-height: 1.2em;
+    }
+
+    /* Options */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: #9999cc;
+      margin-bottom: 8px;
+    }
+    .toggle-row:last-child { margin-bottom: 0; }
+
+    .toggle { position: relative; width: 34px; height: 18px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .track {
+      position: absolute; inset: 0;
+      background: #1e1e3a; border-radius: 18px; cursor: pointer; transition: background 0.2s;
+    }
+    .track::before {
+      content: ''; position: absolute;
+      width: 12px; height: 12px; left: 3px; top: 3px;
+      background: #555880; border-radius: 50%; transition: 0.2s;
+    }
+    .toggle input:checked + .track { background: #2a6ad0; }
+    .toggle input:checked + .track::before { transform: translateX(16px); background: #7eb8ff; }
+
+    /* ── Controls ── */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .ctrl-btn {
+      background: #1a1a2e;
+      color: #ccd0ff;
+      border: 1px solid #2e2e50;
+      padding: 9px 20px;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .ctrl-btn:hover { background: #22224a; border-color: #4a9eff; }
+    .ctrl-btn.primary { background: #2a5fbb; border-color: #4a9eff; color: #fff; }
+    .ctrl-btn.primary:hover { background: #1e4fa0; }
+    .ctrl-btn.playing { background: #1a4428; border-color: #00dd88; color: #00dd88; }
+
+    .speed-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: #555880;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      height: 4px; border-radius: 2px;
+      background: #1e1e3a; outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #4a9eff; cursor: pointer;
+    }
+    #speedRange { width: 72px; }
+
+    /* ── Timeline ── */
+    .timeline-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .tl-label { font-size: 0.72rem; color: #555880; min-width: 64px; text-align: right; }
+    #timelineRange { flex: 1; }
+
+    /* ── Legend ── */
+    .legend {
+      display: flex;
+      gap: 14px;
+      font-size: 0.7rem;
+      color: #666899;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-dot {
+      width: 10px; height: 10px; border-radius: 2px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Block Puzzle RL Visualizer</h1>
+
+  <!-- Load screen -->
+  <div id="loadScreen">
+    <p>Запусти <code>record_game.py</code> и загрузи полученный <code>replay.json</code></p>
+    <input type="file" id="fileInput" accept=".json" style="display:none">
+    <button class="load-btn" onclick="document.getElementById('fileInput').click()">
+      📂 &nbsp;Загрузить replay.json
+    </button>
+  </div>
+
+  <!-- Main app -->
+  <div id="app">
+    <!-- Top bar -->
+    <div class="top-bar">
+      <select class="ep-sel" id="epSelect"></select>
+      <span class="model-tag" id="modelTag">—</span>
+      <button class="small-btn" onclick="document.getElementById('fileInput').click()">⟳ Новый файл</button>
+    </div>
+
+    <!-- Board + sidebar -->
+    <div class="main-row">
+      <canvas id="boardCanvas"></canvas>
+
+      <div class="sidebar">
+        <!-- Pieces -->
+        <div class="panel">
+          <div class="panel-title">Текущие фигуры</div>
+          <div id="piecesPanel"></div>
+        </div>
+
+        <!-- Stats -->
+        <div class="panel">
+          <div class="panel-title">Статистика</div>
+          <div class="stats-grid">
+            <div class="stat-box">
+              <div class="stat-val" id="sLines">0</div>
+              <div class="stat-lbl">Линий</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-val" id="sPieces">0</div>
+              <div class="stat-lbl">Фигур</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-val" id="sStep">0</div>
+              <div class="stat-lbl">Ход</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-val" id="sReward">0</div>
+              <div class="stat-lbl">Награда</div>
+            </div>
+          </div>
+          <div class="lines-flash" id="linesFlash"></div>
+        </div>
+
+        <!-- Options -->
+        <div class="panel">
+          <div class="panel-title">Отображение</div>
+          <div class="toggle-row">
+            <span>Допустимые ходы</span>
+            <label class="toggle">
+              <input type="checkbox" id="optValid" checked>
+              <span class="track"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <span>Heatmap логитов</span>
+            <label class="toggle">
+              <input type="checkbox" id="optLogits">
+              <span class="track"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <span>Показать board_after</span>
+            <label class="toggle">
+              <input type="checkbox" id="optAfter">
+              <span class="track"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls-row">
+      <button class="ctrl-btn" onclick="seek(-10)">«10</button>
+      <button class="ctrl-btn" onclick="navigate(-1)">◀ Назад</button>
+      <button class="ctrl-btn primary" onclick="navigate(1)">Вперёд ▶</button>
+      <button class="ctrl-btn" onclick="seek(10)">10»</button>
+      <button class="ctrl-btn" id="autoBtn" onclick="toggleAuto()">▶ Авто</button>
+      <div class="speed-wrap">
+        <span>Скорость</span>
+        <input type="range" id="speedRange" min="1" max="12" value="3">
+        <span id="speedLabel">3×</span>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="timeline-row">
+      <span class="tl-label" id="tlLabel">1 / 1</span>
+      <input type="range" id="timelineRange" min="0" value="0">
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#4a9eff"></div>Занятая клетка</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#00ff88"></div>Ход нейросети (слот 1)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ffaa33"></div>Ход нейросети (слот 2)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff5577"></div>Ход нейросети (слот 3)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:rgba(255,255,255,0.15); border:1px solid #444"></div>Допустимая позиция</div>
+    </div>
+  </div>
+
+  <script>
+  // ═══════════════════════════════════════════════════════════
+  //  Constants
+  // ═══════════════════════════════════════════════════════════
+
+  const CELL = 27;     // board cell size px
+  const GAP  = 1;      // gap between cells px
+  const PCELL = 13;    // piece preview cell size px
+  const PGAP  = 1;
+
+  const SLOT_COLOR = ['#00ff88', '#ffaa33', '#ff5577'];
+  const FILLED_COLOR = '#3a7fd5';
+  const EMPTY_COLOR  = '#151530';
+  const GRID_COLOR   = '#1a1a38';
+  const BG_COLOR     = '#0d0d1a';
+
+  // ═══════════════════════════════════════════════════════════
+  //  State
+  // ═══════════════════════════════════════════════════════════
+
+  let replay    = null;
+  let epIdx     = 0;
+  let frameIdx  = 0;
+  let isPlaying = false;
+  let timer     = null;
+
+  // ═══════════════════════════════════════════════════════════
+  //  File loading
+  // ═══════════════════════════════════════════════════════════
+
+  document.getElementById('fileInput').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        replay = JSON.parse(ev.target.result);
+        initViewer();
+      } catch (err) {
+        alert('Ошибка парсинга JSON:\n' + err.message);
+      }
+    };
+    reader.readAsText(f);
+    e.target.value = '';
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Init
+  // ═══════════════════════════════════════════════════════════
+
+  function initViewer() {
+    document.getElementById('loadScreen').style.display = 'none';
+    document.getElementById('app').classList.add('visible');
+
+    document.getElementById('modelTag').textContent = replay.model_name || '';
+
+    // Episode select
+    const sel = document.getElementById('epSelect');
+    sel.innerHTML = '';
+    replay.episodes.forEach((ep, i) => {
+      const o = document.createElement('option');
+      o.value = i;
+      o.textContent =
+        `Эпизод ${ep.episode}  —  ${ep.ep_lines_cleared} лин, ${ep.total_steps} ходов`;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', () => {
+      stopAuto();
+      epIdx    = parseInt(sel.value);
+      frameIdx = 0;
+      render();
+    });
+
+    // Canvas size
+    const n = replay.board_size;
+    const sz = n * CELL + (n - 1) * GAP;
+    const canvas = document.getElementById('boardCanvas');
+    canvas.width  = sz;
+    canvas.height = sz;
+
+    // Pieces panel
+    buildPiecesPanel();
+
+    // Timeline
+    document.getElementById('timelineRange').addEventListener('input', e => {
+      stopAuto();
+      frameIdx = parseInt(e.target.value);
+      render();
+    });
+
+    // Speed label
+    document.getElementById('speedRange').addEventListener('input', e => {
+      document.getElementById('speedLabel').textContent = e.target.value + '×';
+    });
+
+    // Toggles
+    ['optValid', 'optLogits', 'optAfter'].forEach(id =>
+      document.getElementById(id).addEventListener('change', render));
+
+    epIdx    = 0;
+    frameIdx = 0;
+    render();
+  }
+
+  function buildPiecesPanel() {
+    const panel = document.getElementById('piecesPanel');
+    panel.innerHTML = '';
+    for (let s = 0; s < 3; s++) {
+      const slot = document.createElement('div');
+      slot.className = 'piece-slot';
+      slot.id = `slot-${s}`;
+
+      const num = document.createElement('div');
+      num.className = 'slot-num';
+      num.textContent = s + 1;
+
+      const canvas = document.createElement('canvas');
+      canvas.id = `pc-${s}`;
+      canvas.width  = 80;
+      canvas.height = 68;
+
+      slot.appendChild(num);
+      slot.appendChild(canvas);
+      panel.appendChild(slot);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Navigation
+  // ═══════════════════════════════════════════════════════════
+
+  function ep()    { return replay.episodes[epIdx]; }
+  function frame() { return ep().frames[frameIdx]; }
+
+  function navigate(dir) {
+    frameIdx = clamp(frameIdx + dir, 0, ep().frames.length - 1);
+    render();
+  }
+
+  function seek(delta) {
+    frameIdx = clamp(frameIdx + delta, 0, ep().frames.length - 1);
+    render();
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function toggleAuto() {
+    isPlaying ? stopAuto() : startAuto();
+  }
+
+  function startAuto() {
+    isPlaying = true;
+    document.getElementById('autoBtn').textContent = '⏸ Пауза';
+    document.getElementById('autoBtn').classList.add('playing');
+    scheduleNext();
+  }
+
+  function stopAuto() {
+    isPlaying = false;
+    document.getElementById('autoBtn').textContent = '▶ Авто';
+    document.getElementById('autoBtn').classList.remove('playing');
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  function scheduleNext() {
+    if (!isPlaying) return;
+    const speed = parseInt(document.getElementById('speedRange').value);
+    const ms    = Math.round(1100 / speed);
+    timer = setTimeout(() => {
+      if (frameIdx < ep().frames.length - 1) {
+        frameIdx++;
+        render();
+        scheduleNext();
+      } else {
+        stopAuto();
+      }
+    }, ms);
+  }
+
+  // Keyboard
+  document.addEventListener('keydown', e => {
+    if (!replay) return;
+    if (e.key === 'ArrowRight' || e.key === 'd') { stopAuto(); navigate(1); }
+    if (e.key === 'ArrowLeft'  || e.key === 'a') { stopAuto(); navigate(-1); }
+    if (e.key === ' ') { e.preventDefault(); toggleAuto(); }
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Render
+  // ═══════════════════════════════════════════════════════════
+
+  function render() {
+    const f   = frame();
+    const tot = ep().frames.length;
+    const n   = replay.board_size;
+
+    // Timeline
+    const tl = document.getElementById('timelineRange');
+    tl.max   = tot - 1;
+    tl.value = frameIdx;
+    document.getElementById('tlLabel').textContent = `${frameIdx + 1} / ${tot}`;
+
+    // Stats
+    document.getElementById('sLines').textContent  = f.ep_lines_cleared;
+    document.getElementById('sPieces').textContent = f.ep_pieces_placed;
+    document.getElementById('sStep').textContent   = f.step;
+
+    const r = f.reward;
+    const rEl = document.getElementById('sReward');
+    rEl.textContent = r.toFixed(1);
+    rEl.className = 'stat-val ' + (r > 0.5 ? 'green' : r < -0.5 ? 'red' : 'dim');
+
+    document.getElementById('linesFlash').textContent =
+      f.lines_cleared > 0 ? `+${f.lines_cleared} ${f.lines_cleared === 1 ? 'линия' : 'линий'}!` : '';
+
+    drawBoard(f, n);
+    drawPieces(f);
+  }
+
+  // ─── Board ───────────────────────────────────────────────
+
+  function cellXY(row, col) {
+    return [col * (CELL + GAP), row * (CELL + GAP)];
+  }
+
+  function drawBoard(f, n) {
+    const canvas = document.getElementById('boardCanvas');
+    const ctx    = canvas.getContext('2d');
+    const showValid  = document.getElementById('optValid').checked;
+    const showLogits = document.getElementById('optLogits').checked;
+    const showAfter  = document.getElementById('optAfter').checked;
+
+    const board = showAfter ? f.board_after : f.board;
+    const slot  = f.action_slot;
+
+    // Logit range for normalization (only valid cells)
+    let lMin = Infinity, lMax = -Infinity;
+    if (showLogits && f.logits && f.logits[slot]) {
+      for (let i = 0; i < n; i++)
+        for (let j = 0; j < n; j++) {
+          if (f.valid_masks && f.valid_masks[slot] && f.valid_masks[slot][i][j]) {
+            const v = f.logits[slot][i][j];
+            if (v > lMax) lMax = v;
+            if (v < lMin) lMin = v;
+          }
+        }
+    }
+
+    // Background
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Cells
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const [x, y] = cellXY(i, j);
+        const filled = board[i][j] === 1;
+
+        // Base cell
+        ctx.fillStyle = filled ? FILLED_COLOR : EMPTY_COLOR;
+        ctx.fillRect(x, y, CELL, CELL);
+
+        if (filled) {
+          // Top/left highlight for 3D effect
+          ctx.fillStyle = 'rgba(255,255,255,0.12)';
+          ctx.fillRect(x, y, CELL, 2);
+          ctx.fillRect(x, y, 2, CELL);
+          // Bottom/right shadow
+          ctx.fillStyle = 'rgba(0,0,0,0.25)';
+          ctx.fillRect(x, y + CELL - 2, CELL, 2);
+          ctx.fillRect(x + CELL - 2, y, 2, CELL);
+        } else {
+          // Valid placement overlay
+          if (showValid && f.valid_masks && slot < f.valid_masks.length && f.valid_masks[slot][i][j]) {
+            ctx.fillStyle = 'rgba(255,255,255,0.09)';
+            ctx.fillRect(x, y, CELL, CELL);
+            // Dot in center
+            ctx.fillStyle = 'rgba(255,255,255,0.18)';
+            ctx.beginPath();
+            ctx.arc(x + CELL / 2, y + CELL / 2, 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Logits heatmap
+          if (showLogits && f.logits && slot < f.logits.length && lMax > lMin) {
+            const v = f.logits[slot][i][j];
+            if (isFinite(v)) {
+              const t = (v - lMin) / (lMax - lMin);
+              // Blue (cold) → Yellow (hot)
+              const r = Math.round(255 * Math.min(1, t * 2));
+              const g = Math.round(255 * Math.min(1, t * 2, (1 - t) * 2));
+              const b = Math.round(255 * Math.max(0, 1 - t * 2));
+              ctx.fillStyle = `rgba(${r},${g},${b},${0.2 + 0.55 * t})`;
+              ctx.fillRect(x, y, CELL, CELL);
+            }
+          }
+        }
+
+        // Grid line
+        ctx.strokeStyle = GRID_COLOR;
+        ctx.lineWidth   = 0.5;
+        ctx.strokeRect(x + 0.25, y + 0.25, CELL - 0.5, CELL - 0.5);
+      }
+    }
+
+    // 4×4 section dividers
+    ctx.strokeStyle = 'rgba(80,80,180,0.25)';
+    ctx.lineWidth   = 1;
+    for (let k = 4; k < n; k += 4) {
+      const pos = k * (CELL + GAP) - GAP / 2;
+      ctx.beginPath(); ctx.moveTo(pos, 0); ctx.lineTo(pos, canvas.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, pos); ctx.lineTo(canvas.width, pos);  ctx.stroke();
+    }
+
+    // Piece placement preview (only when showing board_before)
+    if (!showAfter && f.pieces && slot < f.pieces.length) {
+      const piece = f.pieces[slot];
+      const color = SLOT_COLOR[slot];
+
+      for (let pr = 0; pr < piece.length; pr++) {
+        for (let pc = 0; pc < piece[pr].length; pc++) {
+          if (!piece[pr][pc]) continue;
+          const bi = f.action_y + pr;
+          const bj = f.action_x + pc;
+          if (bi < 0 || bi >= n || bj < 0 || bj >= n) continue;
+
+          const [x, y] = cellXY(bi, bj);
+          ctx.fillStyle = color;
+          ctx.fillRect(x, y, CELL, CELL);
+
+          // Glow highlights
+          ctx.fillStyle = 'rgba(255,255,255,0.28)';
+          ctx.fillRect(x, y, CELL, 2);
+          ctx.fillRect(x, y, 2, CELL);
+
+          ctx.fillStyle = 'rgba(0,0,0,0.2)';
+          ctx.fillRect(x, y + CELL - 2, CELL, 2);
+          ctx.fillRect(x + CELL - 2, y, 2, CELL);
+        }
+      }
+
+      // Glowing border around placed piece region
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 1.5;
+      ctx.shadowColor = color;
+      ctx.shadowBlur  = 8;
+      const [x0, y0] = cellXY(f.action_y, f.action_x);
+      const h = piece.length;
+      const w = piece[0].length;
+      ctx.strokeRect(x0 - 1, y0 - 1, w * (CELL + GAP) + 1, h * (CELL + GAP) + 1);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  // ─── Pieces sidebar ──────────────────────────────────────
+
+  function drawPieces(f) {
+    for (let s = 0; s < 3; s++) {
+      const canvas = document.getElementById(`pc-${s}`);
+      const ctx    = canvas.getContext('2d');
+      const slot   = document.getElementById(`slot-${s}`);
+
+      ctx.fillStyle = BG_COLOR;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const hasPiece = f.pieces && s < f.pieces.length;
+
+      slot.className = 'piece-slot' + (
+        !hasPiece ? ' inactive'
+        : s === f.action_slot ? ' active'
+        : ''
+      );
+
+      if (!hasPiece) continue;
+
+      const piece   = f.pieces[s];
+      const isChosen = s === f.action_slot;
+      const color   = isChosen ? SLOT_COLOR[s] : '#2a4a7a';
+
+      for (let pr = 0; pr < piece.length; pr++) {
+        for (let pc = 0; pc < piece[pr].length; pc++) {
+          if (!piece[pr][pc]) continue;
+          const x = pc * (PCELL + PGAP) + 4;
+          const y = pr * (PCELL + PGAP) + 4;
+          ctx.fillStyle = color;
+          ctx.fillRect(x, y, PCELL, PCELL);
+          if (isChosen) {
+            ctx.fillStyle = 'rgba(255,255,255,0.22)';
+            ctx.fillRect(x, y, PCELL, 2);
+            ctx.fillRect(x, y, 2, PCELL);
+          }
+        }
+      }
+    }
+  }
+  </script>
+</body>
+</html>

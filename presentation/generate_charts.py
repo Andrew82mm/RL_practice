@@ -13,9 +13,13 @@ import matplotlib.patches as mpatches
 import matplotlib.ticker as mticker
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
+import shutil
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHARTS_DIR = os.path.join(_PROJECT_ROOT, "results", "charts")
+PICTURES_DIR = os.path.join(_PROJECT_ROOT, "presentation", "tex", "pictures")
 os.makedirs(CHARTS_DIR, exist_ok=True)
+os.makedirs(PICTURES_DIR, exist_ok=True)
 
 # Убираем устаревшие файлы
 for _old in ["chart_stability.png", "chart_survival.png", "chart_generations.png",
@@ -71,7 +75,8 @@ def save(name: str):
     plt.savefig(path, dpi=150, bbox_inches="tight",
                 facecolor=BG, edgecolor="none")
     plt.close()
-    print(f"  ✓ results/charts/{name}")
+    shutil.copy2(path, os.path.join(PICTURES_DIR, name))
+    print(f"  ✓ results/charts/{name} → presentation/tex/pictures/{name}")
 
 
 def sig_label(p: float) -> str:
@@ -113,6 +118,8 @@ LOG_PATHS = {
     "CNN Gen 2": _log("models/gen2/cnn_gen_2/training_console.log"),
     "CNN Gen 3": _log("models/gen3/cnn_gen_3/training_console.log"),
     "CNN Gen 3 TR": _log("models/gen3/cnn_gen_3_tr/training_console.log"),
+    "CNN Gen 4": _log("models/gen4/cnn/notebookc5318547d8.log"),
+    "ViT Gen 4": _log("models/gen4/vit/notebook7a01605639.log"),
 }
 
 _STEPS_RE = re.compile(r'\|\s*total_timesteps\s*\|\s*([\d.e+]+)\s*\|')
@@ -198,10 +205,11 @@ for piece, color, border, label, px in zip(
     ax_p.text(px + 1.5, -0.35, label, ha="center", va="top",
               fontsize=10, color=color, fontweight="bold")
 
-plt.savefig(os.path.join(CHARTS_DIR, "board_game_demo.png"), dpi=150, bbox_inches="tight",
-            facecolor=BG, edgecolor="none")
+_demo_path = os.path.join(CHARTS_DIR, "board_game_demo.png")
+plt.savefig(_demo_path, dpi=150, bbox_inches="tight", facecolor=BG, edgecolor="none")
 plt.close()
-print("  ✓ results/charts/board_game_demo.png")
+shutil.copy2(_demo_path, os.path.join(PICTURES_DIR, "board_game_demo.png"))
+print("  ✓ results/charts/board_game_demo.png → presentation/tex/pictures/board_game_demo.png")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -824,6 +832,168 @@ ax.yaxis.grid(True, alpha=0.25, zorder=0); ax.set_axisbelow(True)
 ax.legend(fontsize=12, framealpha=0.2)
 plt.tight_layout()
 save("chart_mlp_vs_cnn.png")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 17. КРИВЫЕ ОБУЧЕНИЯ — Gen 4 (CNN + ViT, 16×16, BC+PPO)
+# ════════════════════════════════════════════════════════════════════════════
+GEN4_MODELS = ["CNN Gen 4", "ViT Gen 4"]
+GEN4_COLORS = [TEAL, PURPLE]
+
+fig, ax = plt.subplots(figsize=(11, 5.2))
+
+any_plotted = False
+for name, color in zip(GEN4_MODELS, GEN4_COLORS):
+    path = LOG_PATHS[name]
+    if not os.path.exists(path):
+        print(f"  ⚠ лог не найден: {path}")
+        continue
+    steps, rews = parse_log(path)
+    if len(rews) == 0:
+        print(f"  ⚠ лог пустой: {path}")
+        continue
+    steps_m = steps / 1e6
+    win = 80 if len(rews) > 1000 else 20
+
+    ax.plot(steps_m, rews, color=color, alpha=0.12, linewidth=0.8, zorder=2)
+
+    s_rews, s_idx = smooth(rews, win)
+    ax.plot(steps_m[s_idx], s_rews, color=color, linewidth=2.2,
+            label=name, zorder=3)
+
+    final = s_rews[-1]
+    ax.text(steps_m[s_idx[-1]] + 0.1, final,
+            f"{final:.1f}", va="center", fontsize=10, color=color,
+            fontweight="bold")
+    any_plotted = True
+
+if any_plotted:
+    ax.axhline(64.23, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.5, zorder=1)
+    ax.text(0.1, 66, "Heuristic 16×16 (≈64)", fontsize=10, color=ORANGE, alpha=0.7)
+
+    ax.set_xlabel("Шаги обучения (млн)", fontsize=13, labelpad=8)
+    ax.set_ylabel("ep_rew_mean (скользящее среднее)", fontsize=13, labelpad=8)
+    ax.set_title("Кривые обучения — Gen 4 (CNN и ViT, 16×16, BC+PPO)",
+                 fontsize=14, pad=12)
+    ax.yaxis.grid(True, alpha=0.20, zorder=0)
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=12, framealpha=0.2, loc="lower right")
+    plt.tight_layout()
+    save("chart_learning_gen4.png")
+else:
+    plt.close()
+    print("  ⚠ chart_learning_gen4.png пропущен — логи не найдены")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 18. СРАВНЕНИЕ АГЕНТОВ GEN 4 — доска 16×16
+# ════════════════════════════════════════════════════════════════════════════
+agents4   = ["Random", "Heuristic", "CNN\n(BC+PPO)", "ViT\n(BC+PPO)"]
+means4    = [0.47,      7.21,        18.76,            18.12]
+stds4     = [0.89,      7.09,         9.96,             9.74]
+colors4   = [GREY,      ORANGE,       TEAL,             PURPLE]
+
+fig, ax = plt.subplots(figsize=(9, 5.0))
+bars = ax.bar(agents4, means4, color=colors4, width=0.55, alpha=0.82, zorder=3,
+              yerr=stds4, capsize=7,
+              error_kw={"color": WHITE, "linewidth": 1.6, "alpha": 0.6})
+ax.set_ylabel("Линий за игру (среднее ± σ)", fontsize=13, labelpad=10)
+ax.set_title("Результаты Gen 4 — доска 16×16 (500 эпизодов, seed=42)",
+             fontsize=14, pad=14, color=WHITE)
+ax.set_ylim(0, 35)
+ax.yaxis.grid(True, alpha=0.25, zorder=0)
+ax.set_axisbelow(True)
+
+for bar, mean in zip(bars, means4):
+    ax.text(bar.get_x() + bar.get_width() / 2, mean + 0.6,
+            f"{mean:.2f}", ha="center", va="bottom",
+            fontsize=12, color=WHITE, fontweight="bold")
+
+ax.axhline(7.21, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.4, zorder=2)
+ax.text(3.3, 7.9, "Heuristic baseline", fontsize=10, color=ORANGE, alpha=0.7)
+
+
+plt.tight_layout()
+save("chart_comparison_gen4.png")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 19. SURVIVAL ANALYSIS GEN 4
+# ════════════════════════════════════════════════════════════════════════════
+THRESHOLDS_G4 = [1, 5, 10, 15, 20, 25, 30]
+SURVIVAL_GEN4 = {
+    "Random":       {1: 0.29, 5: 0.01, 10: 0.00, 15: 0.00, 20: 0.00, 25: 0.00, 30: 0.00},
+    "Heuristic":    {1: 0.88, 5: 0.51, 10: 0.32, 15: 0.15, 20: 0.07, 25: 0.03, 30: 0.01},
+    "CNN (BC+PPO)": {1: 1.00, 5: 0.97, 10: 0.85, 15: 0.63, 20: 0.41, 25: 0.27, 30: 0.13},
+    "ViT (BC+PPO)": {1: 1.00, 5: 0.97, 10: 0.84, 15: 0.61, 20: 0.41, 25: 0.23, 30: 0.13},
+}
+SURV_G4_STYLES = [
+    ("Random",       GREY,   ":",  1.4),
+    ("Heuristic",    ORANGE, "--", 1.8),
+    ("CNN (BC+PPO)", TEAL,   "-",  2.4),
+    ("ViT (BC+PPO)", PURPLE, "-",  2.4),
+]
+
+fig, ax = plt.subplots(figsize=(10, 5.2))
+xs4 = [0] + THRESHOLDS_G4
+for name, color, ls, lw in SURV_G4_STYLES:
+    rates = SURVIVAL_GEN4[name]
+    ys = [1.0] + [rates[t] for t in THRESHOLDS_G4]
+    ax.step(xs4, ys, where="post", color=color, linewidth=lw,
+            linestyle=ls, alpha=0.90, label=name, zorder=3)
+    ax.plot(THRESHOLDS_G4, [rates[t] for t in THRESHOLDS_G4],
+            "o", color=color, markersize=5, alpha=0.7, zorder=4)
+
+ax.set_xlabel("Порог (число очищенных линий)", fontsize=13, labelpad=8)
+ax.set_ylabel("Доля эпизодов ≥ threshold", fontsize=13, labelpad=8)
+ax.set_title("Survival Analysis Gen 4 — доска 16×16 (500 эпизодов)",
+             fontsize=14, pad=12)
+ax.set_xlim(0, 32); ax.set_ylim(0, 1.05)
+ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1))
+ax.yaxis.grid(True, alpha=0.20, zorder=0)
+ax.xaxis.grid(True, alpha=0.12, zorder=0)
+ax.set_axisbelow(True)
+ax.legend(fontsize=11, framealpha=0.2, loc="upper right")
+plt.tight_layout()
+save("chart_survival_gen4.png")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 20. РАСШИРЕННЫЙ BARS — все поколения включая Gen 4
+# ════════════════════════════════════════════════════════════════════════════
+agents_all = ["Random", "Heuristic",
+              "MLP\nGen 3", "CNN\nGen 3 TL",
+              "CNN\n(BC+PPO)\n16×16", "ViT\n(BC+PPO)\n16×16"]
+means_all  = [1.79,   8.48,   11.21,  8.85,   18.76,  18.12]
+stds_all   = [2.12,   7.60,    7.68,  5.66,    9.96,   9.74]
+colors_all = [GREY, ORANGE, PURPLE, YELLOW_HIGH, TEAL, BLUE_BLOB]
+
+fig, ax = plt.subplots(figsize=(12, 5.2))
+bars = ax.bar(agents_all, means_all, color=colors_all, width=0.60, alpha=0.82,
+              zorder=3, yerr=stds_all, capsize=7,
+              error_kw={"color": WHITE, "linewidth": 1.4, "alpha": 0.55})
+ax.set_ylabel("Линий за игру (среднее ± σ)", fontsize=13, labelpad=10)
+ax.set_title("Финальное сравнение: Gen 1–4 лучшие агенты",
+             fontsize=14, pad=14, color=WHITE)
+ax.set_ylim(0, 34)
+ax.yaxis.grid(True, alpha=0.25, zorder=0)
+ax.set_axisbelow(True)
+
+for bar, mean in zip(bars, means_all):
+    ax.text(bar.get_x() + bar.get_width() / 2, mean + 0.5,
+            f"{mean:.1f}", ha="center", va="bottom",
+            fontsize=11, color=WHITE, fontweight="bold")
+
+ax.axhline(8.48, color=ORANGE, linestyle="--", linewidth=1.2, alpha=0.35, zorder=2)
+ax.text(5.3, 9.0, "Heuristic 8×8", fontsize=9, color=ORANGE, alpha=0.6)
+
+# Разделитель 8×8 / 16×16
+ax.axvline(3.5, color=GRID_STROKE, linestyle="-", linewidth=1.5, alpha=0.7, zorder=2)
+ax.text(1.5, 30, "Доска 8×8", ha="center", fontsize=10, color=MUTED)
+ax.text(4.5, 30, "Доска 16×16", ha="center", fontsize=10, color=MUTED)
+
+plt.tight_layout()
+save("chart_lines_final.png")
 
 
 print("\nВсе графики сгенерированы → results/charts/")
